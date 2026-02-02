@@ -2,9 +2,13 @@
 Tests to verify that TH1 and derived histograms conform to the UHI Indexing interfaces (setting, accessing and slicing).
 """
 
+import numpy as np
 import pytest
 import ROOT
-from ROOT._pythonization._uhi import _get_axis, _get_processed_slices, _overflow, _shape, _underflow
+from conftest import _iterate_bins
+from ROOT._pythonization._uhi.indexing import _get_processed_slices
+from ROOT._pythonization._uhi.plotting import _shape
+from ROOT._pythonization._uhi.tags import _get_axis, _overflow, _underflow
 from ROOT.uhi import loc, overflow, rebin, sum, underflow
 
 
@@ -17,14 +21,6 @@ def _special_setting(hist):
 
 def _get_index_for_dimension(hist, index):
     return (index,) * hist.GetDimension()
-
-
-def _iterate_bins(hist):
-    dim = hist.GetDimension()
-    for i in range(1, hist.GetNbinsX() + 1):
-        for j in range(1, hist.GetNbinsY() + 1) if dim > 1 else [None]:
-            for k in range(1, hist.GetNbinsZ() + 1) if dim > 2 else [None]:
-                yield tuple(filter(None, (i, j, k)))
 
 
 def _get_slice_indices(slices):
@@ -324,6 +320,53 @@ class TestTH1Indexing:
         expected = np.full(_shape(hist_setup), 3, dtype=np.int64)
         hist_setup[...] = expected
         assert list(hist_setup) == expected.flatten().tolist()
+
+
+class TestInfiniteEdges:
+    def setup_method(self):
+        # create a 2D histogram with an infinite upper edge on the Y axis
+        xedges = np.array([0.0, 1.0, 2.0], dtype="float64")
+        yedges = np.array([0.0, 1.0, 2.0, np.inf], dtype="float64")
+        self.h_inf = ROOT.TH2D("h_inf", "h_inf", len(xedges) - 1, xedges, len(yedges) - 1, yedges)
+
+        for i in range(1, self.h_inf.GetNbinsX() + 1):
+            for j in range(1, self.h_inf.GetNbinsY() + 1):
+                self.h_inf.SetBinContent(i, j, 10 * i + j)
+
+    def test_uhi_projection_preserves_content(self):
+        """check that UHI projection behaves like standard projection"""
+        # projection on X axis
+        proj_x_ref = self.h_inf.ProjectionX()
+        proj_x_uhi = self.h_inf[:, ROOT.uhi.sum]
+        ref_values = proj_x_ref.values()
+        uhi_values = proj_x_uhi.values()
+
+        assert np.allclose(uhi_values, ref_values)
+
+        # projection on Y axis
+        proj_y_ref = self.h_inf.ProjectionY()
+        proj_y_uhi = self.h_inf[ROOT.uhi.sum, :]
+        ref_values = proj_y_ref.values()
+        uhi_values = proj_y_uhi.values()
+
+        assert np.allclose(uhi_values, ref_values)
+
+
+class TestHistogramKind:
+    def test_histogram_kind_no_weights(self):
+        h = ROOT.TH1D("h", "h", 100, -10, 10)
+        h.Fill(5)
+        assert h.kind == "COUNT"
+
+    def test_histogram_kind_with_weights(self):
+        h_weighted = ROOT.TH1D("h_weighted", "h_weighted", 100, -10, 10)
+        h_weighted.Fill(5, 2.0)
+        assert h_weighted.kind == "COUNT"
+
+    def test_profile_histogram_kind(self):
+        h_profile = ROOT.TProfile("h_profile", "h_profile", 100, -10, 10)
+        h_profile.Fill(5, 3.0)
+        assert h_profile.kind == "MEAN"
 
 
 if __name__ == "__main__":

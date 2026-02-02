@@ -37,6 +37,7 @@ set( LLVM_LINK_COMPONENTS
   object
   option
   orcjit
+  orcdebugging
   runtimedyld
   scalaropts
   support
@@ -93,6 +94,10 @@ add_cling_library(libcling ${ENABLE_SHARED} ${ENABLE_STATIC}
 
 set_target_properties(libcling
         PROPERTIES ENABLE_EXPORTS 1)
+
+if(MSVC)
+    set_target_properties(libcling PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS 1)
+endif()
 
 if(ENABLE_SHARED)
   if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")

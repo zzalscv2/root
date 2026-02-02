@@ -1,7 +1,9 @@
 #include "hist_test.hxx"
 
+#include <array>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -19,26 +21,49 @@ TEST(RHistEngine, Constructor)
    }
    bins.push_back(BinsY);
    const RVariableBinAxis variableBinAxis(bins);
+   const std::vector<std::string> categories = {"a", "b", "c"};
+   const RCategoricalAxis categoricalAxis(categories);
 
-   RHistEngine<int> engine({regularAxis, variableBinAxis});
-   EXPECT_EQ(engine.GetNDimensions(), 2);
-   const auto &axes = engine.GetAxes();
-   ASSERT_EQ(axes.size(), 2);
-   EXPECT_EQ(axes[0].index(), 0);
-   EXPECT_EQ(axes[1].index(), 1);
-   EXPECT_TRUE(std::get_if<RRegularAxis>(&axes[0]) != nullptr);
-   EXPECT_TRUE(std::get_if<RVariableBinAxis>(&axes[1]) != nullptr);
+   // The most generic constructor takes a vector of axis objects.
+   const std::vector<RAxisVariant> axes = {regularAxis, variableBinAxis, categoricalAxis};
+   RHistEngine<int> engine(axes);
+   EXPECT_EQ(engine.GetNDimensions(), 3);
+   {
+      const auto &engineAxes = engine.GetAxes();
+      ASSERT_EQ(engineAxes.size(), 3);
+      EXPECT_TRUE(engineAxes[0].GetRegularAxis() != nullptr);
+      EXPECT_TRUE(engineAxes[1].GetVariableBinAxis() != nullptr);
+      EXPECT_TRUE(engineAxes[2].GetCategoricalAxis() != nullptr);
+   }
 
-   // Both axes include underflow and overflow bins.
-   EXPECT_EQ(engine.GetTotalNBins(), (BinsX + 2) * (BinsY + 2));
+   // All axes include underflow and overflow bins.
+   EXPECT_EQ(engine.GetTotalNBins(), (BinsX + 2) * (BinsY + 2) * (categories.size() + 1));
 
+   // Test other constructors, including move-assignment.
    engine = RHistEngine<int>(BinsX, {0, BinsX});
    ASSERT_EQ(engine.GetNDimensions(), 1);
-   auto *regular = std::get_if<RRegularAxis>(&engine.GetAxes()[0]);
+   auto *regular = engine.GetAxes()[0].GetRegularAxis();
    ASSERT_TRUE(regular != nullptr);
    EXPECT_EQ(regular->GetNNormalBins(), BinsX);
    EXPECT_EQ(regular->GetLow(), 0);
    EXPECT_EQ(regular->GetHigh(), BinsX);
+   // std::make_pair will take the types of the arguments, std::size_t in this case.
+   engine = RHistEngine<int>(BinsX, std::make_pair(0, BinsX));
+   EXPECT_EQ(engine.GetNDimensions(), 1);
+
+   // Brace-enclosed initializer list
+   engine = RHistEngine<int>({variableBinAxis});
+   EXPECT_EQ(engine.GetNDimensions(), 1);
+   engine = RHistEngine<int>({variableBinAxis, categoricalAxis});
+   EXPECT_EQ(engine.GetNDimensions(), 2);
+
+   // Templated constructors
+   engine = RHistEngine<int>(variableBinAxis);
+   EXPECT_EQ(engine.GetNDimensions(), 1);
+   engine = RHistEngine<int>(variableBinAxis, categoricalAxis);
+   EXPECT_EQ(engine.GetNDimensions(), 2);
+   engine = RHistEngine<int>(variableBinAxis, categoricalAxis, regularAxis);
+   EXPECT_EQ(engine.GetNDimensions(), 3);
 }
 
 TEST(RHistEngine, GetBinContentInvalidNumberOfArguments)
@@ -67,6 +92,23 @@ TEST(RHistEngine, GetBinContentNotFound)
    EXPECT_THROW(engine.GetBinContent(Bins), std::invalid_argument);
 }
 
+TEST(RHistEngine, SetBinContent)
+{
+   using ROOT::Experimental::Internal::SetBinContent;
+
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<int> engine({axis});
+
+   std::array<RBinIndex, 1> indices = {7};
+   SetBinContent(engine, indices, 42);
+   EXPECT_EQ(engine.GetBinContent(indices), 42);
+
+   // "bin not found"
+   indices = {Bins};
+   EXPECT_THROW(SetBinContent(engine, indices, 43), std::invalid_argument);
+}
+
 TEST(RHistEngine, Add)
 {
    static constexpr std::size_t Bins = 20;
@@ -77,9 +119,9 @@ TEST(RHistEngine, Add)
 
    engineA.Fill(-100);
    for (std::size_t i = 0; i < Bins; i++) {
-      engineA.Fill(i);
-      engineA.Fill(i);
-      engineB.Fill(i);
+      engineA.Fill(i + 0.5);
+      engineA.Fill(i + 0.5);
+      engineB.Fill(i + 0.5);
    }
    engineB.Fill(100);
 
@@ -119,7 +161,7 @@ TEST(RHistEngine, Clear)
 
    engine.Fill(-100);
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i);
+      engine.Fill(i + 0.5);
    }
    engine.Fill(100);
 
@@ -140,7 +182,7 @@ TEST(RHistEngine, Clone)
 
    engineA.Fill(-100);
    for (std::size_t i = 0; i < Bins; i++) {
-      engineA.Fill(i);
+      engineA.Fill(i + 0.5);
    }
    engineA.Fill(100);
 
@@ -156,13 +198,44 @@ TEST(RHistEngine, Clone)
 
    // Check that we can continue filling the clone.
    for (std::size_t i = 0; i < Bins; i++) {
-      engineB.Fill(i);
+      engineB.Fill(i + 0.5);
    }
 
    for (auto index : axis.GetNormalRange()) {
       EXPECT_EQ(engineA.GetBinContent(index), 1);
       EXPECT_EQ(engineB.GetBinContent(index), 2);
    }
+}
+
+TEST(RHistEngine, Convert)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<int> engineI({axis});
+
+   engineI.Fill(-100);
+   for (std::size_t i = 0; i < Bins; i++) {
+      engineI.Fill(i);
+      if (i % 2 == 0) {
+         engineI.Fill(i);
+      }
+   }
+   engineI.Fill(100);
+   engineI.Fill(100);
+
+   RHistEngine<float> engineF = engineI.Convert<float>();
+   ASSERT_EQ(engineF.GetNDimensions(), 1);
+   ASSERT_EQ(engineF.GetTotalNBins(), Bins + 2);
+
+   EXPECT_EQ(engineF.GetBinContent(RBinIndex::Underflow()), 1);
+   for (auto index : axis.GetNormalRange()) {
+      if (index.GetIndex() % 2 == 0) {
+         EXPECT_EQ(engineF.GetBinContent(index), 2);
+      } else {
+         EXPECT_EQ(engineF.GetBinContent(index), 1);
+      }
+   }
+   EXPECT_EQ(engineF.GetBinContent(RBinIndex::Overflow()), 2);
 }
 
 TEST(RHistEngine, Fill)
@@ -173,7 +246,7 @@ TEST(RHistEngine, Fill)
 
    engine.Fill(-100);
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i);
+      engine.Fill(i + 0.5);
    }
    engine.Fill(100);
 
@@ -192,7 +265,7 @@ TEST(RHistEngine, FillDiscard)
 
    engine.Fill(-100);
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i);
+      engine.Fill(i + 0.5);
    }
    engine.Fill(100);
 
@@ -210,8 +283,8 @@ TEST(RHistEngine, FillOnlyInner)
    RHistEngine<int> engineNoFlowBins({axisNoFlowBins});
 
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i);
-      engineNoFlowBins.Fill(i);
+      engine.Fill(i + 0.5);
+      engineNoFlowBins.Fill(i + 0.5);
    }
 
    EXPECT_EQ(engine.GetBinContent(RBinIndex::Underflow()), 0);
@@ -230,7 +303,7 @@ TEST(RHistEngine, FillTuple)
 
    engine.Fill(std::make_tuple(-100));
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(std::make_tuple(i));
+      engine.Fill(std::make_tuple(i + 0.5));
    }
    engine.Fill(std::make_tuple(100));
 
@@ -269,7 +342,7 @@ TEST(RHistEngine, FillWeight)
 
    engine.Fill(-100, RWeight(0.25));
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i, RWeight(0.1 + i * 0.03));
+      engine.Fill(i + 0.5, RWeight(0.1 + i * 0.03));
    }
    engine.Fill(100, RWeight(0.75));
 
@@ -288,7 +361,7 @@ TEST(RHistEngine, FillTupleWeight)
 
    engine.Fill(std::make_tuple(-100), RWeight(0.25));
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(std::make_tuple(i), RWeight(0.1 + i * 0.03));
+      engine.Fill(std::make_tuple(i + 0.5), RWeight(0.1 + i * 0.03));
    }
    engine.Fill(std::make_tuple(100), RWeight(0.75));
 
@@ -336,6 +409,28 @@ TEST(RHistEngine, FillTupleWeightInvalidNumberOfArguments)
    EXPECT_THROW(engine2.Fill(std::make_tuple(1, 2, 3), RWeight(1)), std::invalid_argument);
 }
 
+TEST(RHistEngine, Scale)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<float> engine({axis});
+
+   engine.Fill(-100, RWeight(0.25));
+   for (std::size_t i = 0; i < Bins; i++) {
+      engine.Fill(i + 0.5, RWeight(0.1 + i * 0.03));
+   }
+   engine.Fill(100, RWeight(0.75));
+
+   static constexpr double Factor = 0.8;
+   engine.Scale(Factor);
+
+   EXPECT_FLOAT_EQ(engine.GetBinContent(RBinIndex::Underflow()), Factor * 0.25);
+   for (auto index : axis.GetNormalRange()) {
+      EXPECT_FLOAT_EQ(engine.GetBinContent(index), Factor * (0.1 + index.GetIndex() * 0.03));
+   }
+   EXPECT_FLOAT_EQ(engine.GetBinContent(RBinIndex::Overflow()), Factor * 0.75);
+}
+
 TEST(RHistEngine_RBinWithError, Add)
 {
    static constexpr std::size_t Bins = 20;
@@ -344,8 +439,8 @@ TEST(RHistEngine_RBinWithError, Add)
    RHistEngine<RBinWithError> engineB({axis});
 
    for (std::size_t i = 0; i < Bins; i++) {
-      engineA.Fill(i, RWeight(0.2 + i * 0.03));
-      engineB.Fill(i, RWeight(0.1 + i * 0.05));
+      engineA.Fill(i + 0.5, RWeight(0.2 + i * 0.03));
+      engineB.Fill(i + 0.5, RWeight(0.1 + i * 0.05));
    }
 
    engineA.Add(engineB);
@@ -359,6 +454,27 @@ TEST(RHistEngine_RBinWithError, Add)
    }
 }
 
+TEST(RHistEngine_RBinWithError, Convert)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<RBinWithError> engine({axis});
+
+   for (std::size_t i = 0; i < Bins; i++) {
+      engine.Fill(i, RWeight(0.1 + i * 0.03));
+   }
+
+   // It is not possible to convert to RBinWithError, but the other way around is fine.
+   RHistEngine<float> engineF = engine.Convert<float>();
+   RHistEngine<double> engineD = engine.Convert<double>();
+
+   for (auto index : axis.GetNormalRange()) {
+      double weight = 0.1 + index.GetIndex() * 0.03;
+      EXPECT_FLOAT_EQ(engineF.GetBinContent(index), weight);
+      EXPECT_EQ(engineD.GetBinContent(index), weight);
+   }
+}
+
 TEST(RHistEngine_RBinWithError, Fill)
 {
    static constexpr std::size_t Bins = 20;
@@ -366,7 +482,7 @@ TEST(RHistEngine_RBinWithError, Fill)
    RHistEngine<RBinWithError> engine({axis});
 
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i);
+      engine.Fill(i + 0.5);
    }
 
    for (auto index : axis.GetNormalRange()) {
@@ -383,12 +499,33 @@ TEST(RHistEngine_RBinWithError, FillWeight)
    RHistEngine<RBinWithError> engine({axis});
 
    for (std::size_t i = 0; i < Bins; i++) {
-      engine.Fill(i, RWeight(0.1 + i * 0.03));
+      engine.Fill(i + 0.5, RWeight(0.1 + i * 0.03));
    }
 
    for (auto index : axis.GetNormalRange()) {
       auto &bin = engine.GetBinContent(index);
       double weight = 0.1 + index.GetIndex() * 0.03;
+      EXPECT_FLOAT_EQ(bin.fSum, weight);
+      EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
+   }
+}
+
+TEST(RHistEngine_RBinWithError, Scale)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<RBinWithError> engine({axis});
+
+   for (std::size_t i = 0; i < Bins; i++) {
+      engine.Fill(i + 0.5, RWeight(0.1 + i * 0.03));
+   }
+
+   static constexpr double Factor = 0.8;
+   engine.Scale(Factor);
+
+   for (auto index : axis.GetNormalRange()) {
+      auto &bin = engine.GetBinContent(index);
+      double weight = Factor * (0.1 + index.GetIndex() * 0.03);
       EXPECT_FLOAT_EQ(bin.fSum, weight);
       EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
    }

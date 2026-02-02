@@ -189,15 +189,10 @@ public:
    std::uint32_t GetColumnCardinality() const { return fColumnCardinality; }
    std::optional<std::uint32_t> GetTypeChecksum() const { return fTypeChecksum; }
    bool IsProjectedField() const { return fProjectionSourceId != ROOT::kInvalidDescriptorId; }
-   /// Tells if the field describes a user-defined class rather than a fundamental type, a collection, or one of the
-   /// natively supported stdlib classes.
-   /// The dictionary does not need to be available for this method.
-   bool IsCustomClass() const;
-   /// Tells if the field describes a user-defined enum type.
-   /// The dictionary does not need to be available for this method.
-   /// Needs the full descriptor to look up sub fields.
-   bool IsCustomEnum(const RNTupleDescriptor &desc) const;
-   bool IsStdAtomic() const;
+
+   bool IsCustomClass() const R__DEPRECATED(6, 42, "removed from public interface");
+   bool IsCustomEnum(const RNTupleDescriptor &desc) const R__DEPRECATED(6, 42, "removed from public interface");
+   bool IsStdAtomic() const R__DEPRECATED(6, 42, "removed from public interface");
 };
 
 // clang-format off
@@ -668,6 +663,11 @@ public:
    const std::string &GetContent() const { return fContent; }
 };
 
+namespace Internal {
+// Used by the RNTupleReader to activate/deactivate entries. Needs to adapt when we have sharded clusters.
+ROOT::DescriptorId_t CallFindClusterIdOn(const ROOT::RNTupleDescriptor &desc, ROOT::NTupleSize_t entryIdx);
+} // namespace Internal
+
 // clang-format off
 /**
 \class ROOT::RNTupleDescriptor
@@ -694,6 +694,7 @@ and backward compatibility when the metadata evolves.
 class RNTupleDescriptor final {
    friend class Internal::RNTupleDescriptorBuilder;
    friend RNTupleDescriptor Internal::CloneDescriptorSchema(const RNTupleDescriptor &desc);
+   friend DescriptorId_t Internal::CallFindClusterIdOn(const RNTupleDescriptor &desc, NTupleSize_t entryIdx);
 
 public:
    class RHeaderExtension;
@@ -1762,15 +1763,20 @@ public:
    ///   - Logical columns of piece two
    ///   - ...
    void ShiftAliasColumns(std::uint32_t offset);
-
-   /// Get the streamer info records for custom classes. Currently requires the corresponding dictionaries to be loaded.
-   ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t BuildStreamerInfos() const;
 };
 
 inline RNTupleDescriptor CloneDescriptorSchema(const RNTupleDescriptor &desc)
 {
    return desc.CloneSchema();
 }
+
+/// Tells if the field describes a user-defined enum type.
+/// The dictionary does not need to be available for this method.
+/// Needs the full descriptor to look up sub fields.
+bool IsCustomEnumFieldDesc(const RNTupleDescriptor &desc, const RFieldDescriptor &fieldDesc);
+
+/// Tells if the field describes a std::atomic<T> type
+bool IsStdAtomicFieldDesc(const RFieldDescriptor &fieldDesc);
 
 } // namespace Internal
 

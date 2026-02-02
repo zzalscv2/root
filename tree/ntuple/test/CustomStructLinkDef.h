@@ -27,8 +27,15 @@
 #pragma link C++ class IOConstructor+;
 #pragma link C++ class LowPrecisionFloats+;
 
+#pragma link C++ class std::map<int, CustomStruct>+ ;
+#pragma link C++ class std::map<int, float>+ ;
+
+#pragma link C++ class EdmContent<float, long long>+;
 #pragma link C++ class EdmWrapper<CustomStruct> +;
 #pragma link C++ class EdmHash < 1> + ;
+#pragma link C++ class EdmWrapper<long long>+;
+#pragma link C++ class EdmWrapper<std::map<int, EdmContent<float, long long>>>+;
+#pragma link C++ class EdmContainer+;
 
 #pragma link C++ class DataVector < int, double> + ;
 #pragma link C++ class DataVector < int, float> + ;
@@ -62,6 +69,7 @@
 #pragma link C++ class StructUsingCollectionProxy<CustomStruct> + ;
 #pragma link C++ class StructUsingCollectionProxy<StructUsingCollectionProxy<float>> + ;
 #pragma link C++ class StructUsingCollectionProxy<int> + ;
+#pragma link C++ class StructUsingCollectionProxy<Long64_t>+;
 
 #pragma link C++ class TrivialTraitsBase + ;
 #pragma link C++ class TrivialTraits + ;
@@ -151,6 +159,8 @@
 #pragma link C++ class DuplicateBaseB + ;
 #pragma link C++ class DuplicateBaseC + ;
 #pragma link C++ class DuplicateBaseD + ;
+#pragma link C++ class PolymorphicBase + ;
+#pragma link C++ class PolymorphicDerived + ;
 
 #pragma link C++ class Left + ;
 #pragma link C++ class DerivedFromLeftAndTObject+;

@@ -2514,6 +2514,11 @@ class TFramePainter extends FrameInteractive {
             this.fillatt.setSolidColor('white');
          else if ((pad?.fFillStyle === 4000) && !this.fillatt.empty()) // special case of transpad.C macro, which set transparent pad
             this.fillatt.setOpacity(0);
+
+         if (pad && (pad.fFrameBorderMode || (pad.fFrameBorderSize !== 1))) {
+            this.#border_mode = pad.fFrameBorderMode;
+            this.#border_size = pad.fFrameBorderSize;
+         }
       }
 
       if (!tframe && (pad?.fFrameLineColor !== undefined))
@@ -2855,7 +2860,8 @@ class TFramePainter extends FrameInteractive {
          });
          menu.addchk(handle?.noexp ?? faxis.TestBit(EAxisBits.kNoExponent), 'No exponent', flag => {
             faxis.SetBit(EAxisBits.kNoExponent, flag);
-            if (handle) handle.noexp_changed = true;
+            if (handle)
+               handle.noexp_changed = true;
             this[`${kind}_noexp_changed`] = true;
             if (hist_painter?.getSnapId() && (kind.length === 1))
                hist_painter.interactiveRedraw('pad', `exec:SetNoExponent(${flag})`, kind);

@@ -14,10 +14,9 @@ Their main task is to compute the linearized index for a single `Fill` argument:
 ```c++
 RLinearizedIndex ComputeLinearizedIndex(double x);
 ```
-The `bool` is used to indicate if the return value is valid.
-For example, the argument may be outside the axis with the underflow and overflow bins disabled.
-`RLinearizedIndex` is a simple struct with a `std::size_t index` and `bool valid`.
-It is chosen over `std::optional` because it unifies the return value construction:
+`RLinearizedIndex` is a simple struct with a `std::size_t fIndex` and `bool fValid`.
+An index may be invalid if the argument is outside the axis with the underflow and overflow bins disabled.
+A custom struct is chosen over `std::optional` because it unifies the return value construction:
 If outside the axis, the validity is just determined by the member property `fEnableFlowBins`.
 
 ### `Internal::RAxes`
@@ -63,15 +62,32 @@ It can be used as a template argument to `RHistEngine` and `RHist`.
 A wrapper `struct` for a single `double` value, used for weighted filling to distinguish its type.
 Objects of this type are passed by value.
 
+## Classes for Concurrent Filling
+
+### `RHistConcurrentFiller`
+
+A class to orchestrate concurrent filling of `RHist` by creating (multiple) fill contexts.
+
+### `RHistFillContext`
+
+Parallel user code uses contexts to fill `RHist`s concurrently.
+Each instance has a local `RHistStats` object to avoid contention on the global histogram statistics.
+
 ## Auxiliary Classes
 
 ### `RBinIndex`
 
 A single bin index, which is just an integer for normal bins.
 `Underflow()` and `Overflow()` are special values and not ordered with respect to others.
-Objects of this type are passed by value; most notably to `GetBinContent` and `SetBinContent`.
+Objects of this type are passed by value; most notably to `GetBinContent`.
 
 ### `RBinIndexRange`
 
 A range of `RBinIndex` from `begin` (inclusive) to `end` (exclusive).
 The class exposes an iterator interface that can be used in range-based loops.
+
+### `RHistAutoAxisFiller`
+
+A specialized class to automatically determine the axis interval during filling.
+It constructs a regular axis based on the minimum and maximum values of the initial entries.
+The implementation is currently restricted to one dimension and sequential filling.

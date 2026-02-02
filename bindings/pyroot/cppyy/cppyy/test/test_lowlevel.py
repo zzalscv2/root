@@ -1,10 +1,9 @@
-import py, sys, pytest, os
+import sys, pytest, os
 from pytest import mark, raises, skip
 from support import setup_make, pylong, pyunicode, IS_WINDOWS, ispypy
 
 
-currpath = os.getcwd()
-test_dct = currpath + "/libdatatypesDict"
+test_dct = "datatypes_cxx"
 
 
 class TestLOWLEVEL:
@@ -104,7 +103,6 @@ class TestLOWLEVEL:
         ptrptr = cppyy.ll.as_ctypes(s, byref=True)
         assert pycasts.get_deref(ptrptr) == actual
 
-    @mark.xfail()
     def test05_array_as_ref(self):
         """Use arrays for pass-by-ref"""
 
@@ -134,7 +132,7 @@ class TestLOWLEVEL:
         f = array('f', [0]);     ctd.set_float_r(f);  assert f[0] ==  5.
         f = array('d', [0]);     ctd.set_double_r(f); assert f[0] == -5.
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test06_ctypes_as_ref_and_ptr(self):
         """Use ctypes for pass-by-ref/ptr"""
 
@@ -376,6 +374,7 @@ class TestLOWLEVEL:
         with raises(TypeError):
             cppyy.gbl.ArrayOfCStrings.takes_array_of_cstrings(pyargs, len(pyargs))
 
+    @mark.xfail(run=False, condition=IS_WINDOWS, reason="Windows fatal exception: access violation")
     def test11_array_of_const_char_ref(self):
         """Test passting of const char**&"""
 
@@ -490,7 +489,7 @@ class TestLOWLEVEL:
         assert cppyy.gbl.std.vector[cppyy.gbl.std.vector[int]].value_type == 'std::vector<int>'
         assert cppyy.gbl.std.vector['int[1]'].value_type == 'int[1]'
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test15_templated_arrays_gmpxx(self):
         """Use of gmpxx array types in templates"""
 
@@ -544,7 +543,6 @@ class TestMULTIDIMARRAYS:
     def _data_m(self, lbl):
         return [('m_'+tp.replace(' ', '_')+lbl, tp) for tp in self.numeric_builtin_types]
 
-    @mark.xfail()
     def test01_2D_arrays(self):
         """Access and use of 2D data members"""
 
@@ -587,7 +585,6 @@ class TestMULTIDIMARRAYS:
                     assert arr[i][j] == val
                     assert arr[i, j] == val
 
-    @mark.xfail()
     def test02_assign_2D_arrays(self):
         """Direct assignment of 2D arrays"""
 
@@ -640,7 +637,6 @@ class TestMULTIDIMARRAYS:
             arr[2][3] = 10
             assert arr[2][3] == 10
 
-    @mark.xfail()
     def test03_3D_arrays(self):
         """Access and use of 3D data members"""
 

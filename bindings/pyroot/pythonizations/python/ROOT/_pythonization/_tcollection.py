@@ -8,9 +8,9 @@
 # For the list of contributors see $ROOTSYS/README/CREDITS.                    #
 ################################################################################
 
-from . import pythonization
 import cppyy
 
+from . import pythonization
 
 # Python-list-like methods
 
@@ -97,9 +97,6 @@ def _iter_pyz(self):
 def pythonize_tcollection(klass):
     # Parameters:
     # klass: class to be pythonized
-
-    # Support `len(c)` as `c.GetEntries()`
-    klass.__len__ = klass.GetEntries
 
     # Add Python lists methods
     klass.append = klass.Add

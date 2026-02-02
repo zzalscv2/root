@@ -1846,7 +1846,7 @@ void TCling::LoadPCMImpl(TFile &pcmFile)
          }
       }
 
-      protoClasses->Clear(); // Ownership was transfered to TClassTable.
+      protoClasses->Clear(); // Ownership was transferred to TClassTable.
       delete protoClasses;
    }
 
@@ -1855,7 +1855,7 @@ void TCling::LoadPCMImpl(TFile &pcmFile)
    if (dataTypes) {
       for (auto typedf : *dataTypes)
          gROOT->GetListOfTypes()->Add(typedf);
-      dataTypes->Clear(); // Ownership was transfered to TListOfTypes.
+      dataTypes->Clear(); // Ownership was transferred to TListOfTypes.
       delete dataTypes;
    }
 }
@@ -2762,15 +2762,6 @@ void TCling::InspectMembers(TMemberInspector& insp, const void* obj,
    if (TClassEdit::IsStdArray(cl->GetName())) {
       // We treat std arrays as C arrays
       return;
-   }
-
-   if (TClassEdit::IsUniquePtr(cl->GetName())) {
-      // Ignore error caused by the inside of std::unique_ptr
-      // This is needed solely because of rootclingIO's IsUnsupportedUniquePointer
-      // which checks the number of elements in the GetListOfRealData.
-      // If this usage is removed, this can be replaced with a return statement.
-      // See https://github.com/root-project/root/issues/13574
-      isTransient = true;
    }
 
    const char* cobj = (const char*) obj; // for ptr arithmetics
@@ -4050,6 +4041,8 @@ static std::string AlternateTuple(const char *classname, const cling::LookupHelp
    guard << guard_name;
 
    std::ostringstream alternateTuple;
+   std::ostringstream initializers;
+
    alternateTuple << "#ifndef " << guard.str() << "\n";
    alternateTuple << "#define " << guard.str() << "\n";
    alternateTuple << "namespace ROOT { namespace Internal {\n";
@@ -4062,10 +4055,13 @@ static std::string AlternateTuple(const char *classname, const cling::LookupHelp
          unsigned int nMember = 0;
          auto iter = tupleContent.fElements.begin() + 1; // Skip the template name (tuple).
          auto theEnd = tupleContent.fElements.end() - 1; // skip the 'stars'.
+         auto sep = ':';
          while (iter != theEnd) {
             alternateTuple << "   " << *iter << " _" << nMember << ";\n";
+            initializers << "    " << sep << " _" << nMember << "(std::get<" << nMember << ">(std::forward<Tuple>(t)))\n";
             ++iter;
             ++nMember;
+            sep = ',';
          }
          break;
       }
@@ -4073,10 +4069,13 @@ static std::string AlternateTuple(const char *classname, const cling::LookupHelp
          unsigned int nMember = tupleContent.fElements.size() - 3;
          auto iter = tupleContent.fElements.rbegin() + 1; // skip the 'stars'.
          auto theEnd = tupleContent.fElements.rend() - 1; // Skip the template name (tuple).
+         auto sep = ':';
          while (iter != theEnd) {
             alternateTuple << "   " << *iter << " _" << nMember << ";\n";
+            initializers << "    " << sep << " _" << nMember << "(std::get<" << nMember << ">(std::forward<Tuple>(t)))\n";
             ++iter;
             --nMember;
+            sep = ',';
          }
          break;
       }
@@ -4086,6 +4085,15 @@ static std::string AlternateTuple(const char *classname, const cling::LookupHelp
          break;
       }
    }
+
+   // default constructor
+   alternateTuple << "  TEmulatedTuple() = default;\n";
+
+   // constructor from other tuple-like types, like std::tuple
+   alternateTuple << "  template <typename Tuple>\n";
+   alternateTuple << "  TEmulatedTuple(Tuple&& t)\n";
+   alternateTuple << initializers.str();
+   alternateTuple << "  {}\n";
 
    alternateTuple << "};\n";
    alternateTuple << "}}\n";
@@ -4440,6 +4448,11 @@ void TCling::CreateListOfBaseClasses(TClass *cl) const
 {
    R__LOCKGUARD(gInterpreterMutex);
    if (cl->fBase) {
+      return;
+   }
+   // Ignore the base class (e.g. `std::_Complex_base` on Windows)
+   if (TClassEdit::GetComplexType(cl->GetName()) != TClassEdit::EComplexType::kNone) {
+      cl->fBase = new TList();
       return;
    }
    TClingClassInfo *tci = (TClingClassInfo *)cl->GetClassInfo();
@@ -5484,7 +5497,7 @@ Longptr_t TCling::ExecuteMacro(const char* filename, EErrorCode* error)
 const char* TCling::GetTopLevelMacroName() const
 {
    Warning("GetTopLevelMacroName", "Must change return type!");
-   return fCurExecutingMacros.back();
+   return fCurExecutingMacros.empty() ? nullptr : fCurExecutingMacros.back();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -5535,7 +5548,7 @@ const char* TCling::GetCurrentMacroName() const
    Warning("GetCurrentMacroName", "Must change return type!");
 #endif
 #endif
-   return fCurExecutingMacros.back();
+   return fCurExecutingMacros.empty() ? nullptr : fCurExecutingMacros.back();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -5733,18 +5746,18 @@ void TCling::InitRootmapFile(const char *name)
 
    TString sname = "system";
    sname += name;
-   char *s = gSystem->ConcatFileName(TROOT::GetEtcDir(), sname);
+   TString temp_sname = sname;
+   const char *s1 = gSystem->PrependPathName(TROOT::GetEtcDir(), temp_sname);
 
-   Int_t ret = ReadRootmapFile(s);
+   Int_t ret = ReadRootmapFile(s1);
    if (ret == -3) // old format
-      fMapfile->ReadFile(s, kEnvGlobal);
-   delete [] s;
+      fMapfile->ReadFile(s1, kEnvGlobal);
    if (!gSystem->Getenv("ROOTENV_NO_HOME")) {
-      s = gSystem->ConcatFileName(gSystem->HomeDirectory(), name);
-      ret = ReadRootmapFile(s);
+      TString temp_name = name;
+      const char *s2 = gSystem->PrependPathName(gSystem->HomeDirectory(), temp_name);
+      ret = ReadRootmapFile(s2);
       if (ret == -3) // old format
-         fMapfile->ReadFile(s, kEnvUser);
-      delete [] s;
+         fMapfile->ReadFile(s2, kEnvUser);
       if (strcmp(gSystem->HomeDirectory(), gSystem->WorkingDirectory())) {
          ret = ReadRootmapFile(name);
          if (ret == -3) // old format

@@ -563,9 +563,9 @@ RooCmdArg EventRange(Int_t nStart, Int_t nStop)
 EvalBackend::EvalBackend(EvalBackend::Value value) : RooCmdArg{"EvalBackend", static_cast<int>(value)}
 {
 #ifndef ROOFIT_CLAD
-   if (value == Value::Codegen || value == Value::CodegenNoGrad) {
+   if (value == Value::Codegen) {
       oocoutE(nullptr, InputArguments)
-         << "RooFit was built without clad. Codegen backends are unavailable. Falling back to default.\n";
+         << "RooFit was built without clad. The \"codegen\" backend is unavailable. Falling back to default.\n";
       setInt(0, static_cast<int>(defaultValue()));
    }
 #endif
@@ -807,7 +807,7 @@ RooCmdArg Conditional(const RooArgSet &pdfSet, const RooArgSet &depSet, bool dep
 };
 
 // RooAbsPdf::generate arguments
-RooCmdArg ProtoData(const RooDataSet &protoData, bool randomizeOrder, bool resample)
+RooCmdArg ProtoData(const RooAbsData &protoData, bool randomizeOrder, bool resample)
 {
    return RooCmdArg("PrototypeData", randomizeOrder, resample, 0, 0, nullptr, nullptr, &protoData, nullptr);
 }

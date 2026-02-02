@@ -291,7 +291,7 @@ class JSRootMenu {
             title = name;
          if (title)
             title += `, code ${id}`;
-         this.addchk((id === curr) || more, '<nobr>' + name + '</nobr>', id, set_func, title || name);
+         this.addchk((id === curr) || more, name, id, set_func, title || name);
       };
 
       this.sub('Palette', () => this.input('Enter palette code [1..113]', curr, 'int', 1, 113).then(set_func));
@@ -814,6 +814,8 @@ class JSRootMenu {
    /** @summary Fill menu to edit settings properties
      * @private */
    addSettingsMenu(with_hierarchy, alone, handle_func) {
+      if (!isFunc(handle_func))
+         handle_func = () => {};
       if (alone)
          this.header('Settings');
       else
@@ -824,12 +826,12 @@ class JSRootMenu {
       if (with_hierarchy) {
          this.addchk(settings.OnlyLastCycle, 'Last cycle', flag => {
             settings.OnlyLastCycle = flag;
-            if (handle_func) handle_func('refresh');
+            handle_func('refresh');
          });
 
          this.addchk(!settings.SkipStreamerInfos, 'Streamer infos', flag => {
             settings.SkipStreamerInfos = !flag;
-            if (handle_func) handle_func('refresh');
+            handle_func('refresh');
          });
       }
 
@@ -906,18 +908,18 @@ class JSRootMenu {
          this.sub('Browser');
          this.add('Hierarchy limit:  ' + settings.HierarchyLimit, () => this.input('Max number of items in hierarchy', settings.HierarchyLimit, 'int', 10, 100000).then(val => {
             settings.HierarchyLimit = val;
-            if (handle_func) handle_func('refresh');
+            handle_func('refresh');
          }));
          this.add('Browser width:  ' + settings.BrowserWidth, () => this.input('Browser width in px', settings.BrowserWidth, 'int', 50, 2000).then(val => {
             settings.BrowserWidth = val;
-            if (handle_func) handle_func('width');
+            handle_func('width');
          }));
          this.endsub();
       }
 
       this.add('Dark mode: ' + (settings.DarkMode ? 'On' : 'Off'), () => {
          settings.DarkMode = !settings.DarkMode;
-         if (handle_func) handle_func('dark');
+         handle_func('dark');
       });
 
       const setStyleField = arg => { gStyle[arg.slice(1)] = parseInt(arg[0]); },
@@ -1356,13 +1358,13 @@ class StandaloneMenu extends JSRootMenu {
                   title = d.title;
             }
             if (!url)
-               item.innerHTML = d.text;
+               item.innerText = d.text;
             else {
                item.style.display = 'flex';
                item.style['justify-content'] = 'space-between';
 
                const txt = doc.createElement('span');
-               txt.innerHTML = d.text;
+               txt.innerText = d.text;
                txt.style = 'display: inline-block; margin: 0;';
                item.appendChild(txt);
 
@@ -1389,7 +1391,8 @@ class StandaloneMenu extends JSRootMenu {
 
          const hovArea = doc.createElement('div');
          hovArea.style = 'width: 100%; height: 100%; display: flex; justify-content: space-between; cursor: pointer;';
-         if (d.title) hovArea.setAttribute('title', d.title);
+         if (d.title)
+            hovArea.setAttribute('title', d.title);
 
          item.appendChild(hovArea);
          if (!d.text)
@@ -1403,7 +1406,7 @@ class StandaloneMenu extends JSRootMenu {
                text.style.display = 'flex';
 
                const chk = doc.createElement('span');
-               chk.innerHTML = d.checked ? '\u2713' : '';
+               chk.innerText = d.checked ? '\u2713' : '';
                chk.style.display = 'inline-block';
                chk.style.width = '1em';
                text.appendChild(chk);
@@ -1416,17 +1419,14 @@ class StandaloneMenu extends JSRootMenu {
          } else {
             if (need_check_area) {
                const chk = doc.createElement('span');
-               chk.innerHTML = d.checked ? '\u2713' : '';
+               chk.innerText = d.checked ? '\u2713' : '';
                chk.style.display = 'inline-block';
                chk.style.width = '1em';
                text.appendChild(chk);
             }
 
             const sub = doc.createElement('span');
-            if (d.text.indexOf('<nobr>') === 0)
-               sub.textContent = d.text.slice(6, d.text.length - 7);
-            else
-               sub.textContent = d.text;
+            sub.textContent = d.text;
             text.appendChild(sub);
          }
 

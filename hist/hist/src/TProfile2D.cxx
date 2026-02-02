@@ -316,7 +316,7 @@ Int_t TProfile2D::BufferEmpty(Int_t action)
          if (y > ymax) ymax = y;
       }
       if (fXaxis.GetXmax() <= fXaxis.GetXmin() || fYaxis.GetXmax() <= fYaxis.GetXmin()) {
-         THLimitsFinder::GetLimitsFinder()->FindGoodLimits(this,xmin,xmax,ymin,ymax);
+         THLimitsFinder::GetLimitsFinder()->FindGoodLimitsXY(this, xmin, xmax, ymin, ymax);
       } else {
          fBuffer = nullptr;
          Int_t keep = fBufferSize; fBufferSize = 0;
@@ -1894,7 +1894,7 @@ void TProfile2D::SavePrimitive(std::ostream &out, Option_t *option /*= ""*/)
    if (GetYaxis()->GetXbins()->fN && GetYaxis()->GetXbins()->fArray)
       syaxis = SavePrimitiveVector(out, hname + "_y", GetYaxis()->GetXbins()->fN, GetYaxis()->GetXbins()->fArray);
 
-   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << hname << "\", \""
+   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << TString(GetName()).ReplaceSpecialCppChars() << "\", \""
        << TString(GetTitle()).ReplaceSpecialCppChars() << "\", " << GetXaxis()->GetNbins() << ", ";
    if (!sxaxis.IsNull())
       out << sxaxis << ".data()";

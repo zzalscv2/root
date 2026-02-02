@@ -24,7 +24,7 @@ endif()
 
 ROOTTEST_GENERATE_EXECUTABLE(testSetAddress
                              testSetAddress.cpp
-                             LIBRARIES Core MathCore RIO Tree
+                             LIBRARIES Core MathCore RIO Tree TreePlayer GenVector Physics
                              FIXTURES_SETUP root-multicore-testSetAddress-fixture)
 
 if(MSVC)
@@ -52,17 +52,18 @@ ROOTTEST_ADD_TEST(SequentialExecutor
                   FIXTURES_REQUIRED root-multicore-tSequentialExecutor-fixture)
 
 if(NOT MSVC AND NOT dev)
-  ROOTTEST_GENERATE_EXECUTABLE(processExecutorH1Test
-                               tProcessExecutorH1Test.cpp
-                               COMPILE_FLAGS "-I${ROOTSYS}/tutorials/legacy/multicore"
-                               LIBRARIES ROOT::MultiProc ROOT::Core ROOT::Net ROOT::TreePlayer ROOT::Tree ROOT::RIO ROOT::Hist ROOT::Gpad ROOT::Graf
-                               FIXTURES_SETUP root-multicore-processExecutorH1Test-fixture)
+  if(xrootd)
+    ROOTTEST_GENERATE_EXECUTABLE(processExecutorH1Test
+                                tProcessExecutorH1Test.cpp
+                                COMPILE_FLAGS "-I${ROOTSYS}/tutorials/legacy/multicore"
+                                LIBRARIES ROOT::MultiProc ROOT::Core ROOT::Net ROOT::TreePlayer ROOT::Tree ROOT::RIO ROOT::Hist ROOT::Gpad ROOT::Graf
+                                FIXTURES_SETUP root-multicore-processExecutorH1Test-fixture)
 
-  ROOTTEST_ADD_TEST(processExecutorH1Test
-                    EXEC ${CMAKE_CURRENT_BINARY_DIR}/processExecutorH1Test
-                    OUTREF tProcessExecutorH1Test.ref
-                    FIXTURES_REQUIRED root-multicore-processExecutorH1Test-fixture)
-
+    ROOTTEST_ADD_TEST(processExecutorH1Test
+                      EXEC ${CMAKE_CURRENT_BINARY_DIR}/processExecutorH1Test
+                      OUTREF tProcessExecutorH1Test.ref
+                      FIXTURES_REQUIRED root-multicore-processExecutorH1Test-fixture)
+  endif()
   ROOTTEST_GENERATE_EXECUTABLE(processExecutorTreeTest
                                tProcessExecutorTreeTest.cpp
                                LIBRARIES MultiProc Core Net TreePlayer Tree RIO Hist
@@ -296,7 +297,7 @@ if(imt)
 
    ROOTTEST_GENERATE_EXECUTABLE(tp_process_imt
                                 tp_process_imt.cpp
-                                LIBRARIES Core Imt Thread Tree TreePlayer
+                                LIBRARIES Core Imt Thread Tree TreePlayer Physics
                                 FIXTURES_SETUP root-multicore-tp_process_imt-fixture)
 
    ROOTTEST_ADD_TEST(tp_process_imt

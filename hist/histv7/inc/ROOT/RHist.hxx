@@ -5,22 +5,31 @@
 #ifndef ROOT_RHist
 #define ROOT_RHist
 
+#include "RAxisVariant.hxx"
 #include "RBinIndex.hxx"
+#include "RCategoricalAxis.hxx"
 #include "RHistEngine.hxx"
 #include "RHistStats.hxx"
+#include "RRegularAxis.hxx"
 #include "RWeight.hxx"
 
 #include <array>
-#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 class TBuffer;
 
 namespace ROOT {
 namespace Experimental {
+
+// forward declaration for friend declaration
+template <typename BinContentType>
+class RHistFillContext;
 
 /**
 A histogram for aggregation of data along multiple dimensions.
@@ -32,11 +41,11 @@ hist.Fill(8.5);
 // hist.GetBinContent(ROOT::Experimental::RBinIndex(3)) will return 1
 \endcode
 
-The class is templated on the bin content type. For counting, as in the example above, it may be an integer type such as
-`int` or `long`. Narrower types such as `unsigned char` or `short` are supported, but may overflow due to their limited
-range and must be used with care. For weighted filling, the bin content type must be a floating-point type such as
-`float` or `double`, or the special type RBinWithError. Note that `float` has a limited significand precision of 24
-bits.
+The class is templated on the bin content type. For counting, as in the example above, it may be an integral type such
+as `int` or `long`. Narrower types such as `unsigned char` or `short` are supported, but may overflow due to their
+limited range and must be used with care. For weighted filling, the bin content type must not be an integral type, but
+a floating-point type such as `float` or `double`, or the special type RBinWithError. Note that `float` has a limited
+significand precision of 24 bits.
 
 An object can have arbitrary dimensionality determined at run-time. The axis configuration is passed as a vector of
 RAxisVariant:
@@ -53,6 +62,12 @@ Feedback is welcome!
 */
 template <typename BinContentType>
 class RHist final {
+   // For conversion, all other template instantiations must be a friend.
+   template <typename U>
+   friend class RHist;
+
+   friend class RHistFillContext<BinContentType>;
+
    /// The histogram engine including the bin contents.
    RHistEngine<BinContentType> fEngine;
    /// The global histogram statistics.
@@ -65,37 +80,68 @@ public:
    /// Construct a histogram.
    ///
    /// \param[in] axes the axis objects, must have size > 0
-   explicit RHist(std::vector<RAxisVariant> axes) : fEngine(std::move(axes)), fStats(fEngine.GetNDimensions()) {}
+   explicit RHist(std::vector<RAxisVariant> axes) : fEngine(std::move(axes)), fStats(fEngine.GetNDimensions())
+   {
+      // The axes parameter was moved, use from the engine.
+      const auto &engineAxes = fEngine.GetAxes();
+      for (std::size_t i = 0; i < engineAxes.size(); i++) {
+         if (engineAxes[i].GetCategoricalAxis() != nullptr) {
+            fStats.DisableDimension(i);
+         }
+      }
+   }
 
-   /// Construct a one-dimensional histogram engine with a regular axis.
+   /// Construct a histogram.
+   ///
+   /// Note that there is no perfect forwarding of the axis objects. If that is needed, use the
+   /// \ref RHist(std::vector<RAxisVariant> axes) "overload accepting a std::vector".
+   ///
+   /// \param[in] axes the axis objects, must have size > 0
+   explicit RHist(std::initializer_list<RAxisVariant> axes) : RHist(std::vector(axes)) {}
+
+   /// Construct a histogram.
+   ///
+   /// Note that there is no perfect forwarding of the axis objects. If that is needed, use the
+   /// \ref RHist(std::vector<RAxisVariant> axes) "overload accepting a std::vector".
+   ///
+   /// \param[in] axis1 the first axis object
+   /// \param[in] axes the remaining axis objects
+   template <typename... Axes>
+   explicit RHist(const RAxisVariant &axis1, const Axes &...axes) : RHist(std::vector<RAxisVariant>{axis1, axes...})
+   {
+   }
+
+   /// Construct a one-dimensional histogram with a regular axis.
    ///
    /// \param[in] nNormalBins the number of normal bins, must be > 0
    /// \param[in] interval the axis interval (lower end inclusive, upper end exclusive)
    /// \par See also
-   /// the
-   /// \ref RRegularAxis::RRegularAxis(std::size_t nNormalBins, std::pair<double, double> interval, bool enableFlowBins)
-   /// "constructor of RRegularAxis"
-   RHist(std::size_t nNormalBins, std::pair<double, double> interval) : RHist({RRegularAxis(nNormalBins, interval)}) {}
+   /// the \ref RRegularAxis::RRegularAxis(std::uint64_t nNormalBins, std::pair<double, double> interval, bool
+   /// enableFlowBins) "constructor of RRegularAxis"
+   RHist(std::uint64_t nNormalBins, std::pair<double, double> interval)
+      : RHist(std::vector<RAxisVariant>{RRegularAxis(nNormalBins, interval)})
+   {
+   }
 
    /// The copy constructor is deleted.
    ///
    /// Copying all bin contents can be an expensive operation, depending on the number of bins. If required, users can
    /// explicitly call Clone().
-   RHist(const RHist<BinContentType> &) = delete;
+   RHist(const RHist &) = delete;
    /// Efficiently move construct a histogram.
    ///
    /// After this operation, the moved-from object is invalid.
-   RHist(RHist<BinContentType> &&) = default;
+   RHist(RHist &&) = default;
 
    /// The copy assignment operator is deleted.
    ///
    /// Copying all bin contents can be an expensive operation, depending on the number of bins. If required, users can
    /// explicitly call Clone().
-   RHist<BinContentType> &operator=(const RHist<BinContentType> &) = delete;
+   RHist &operator=(const RHist &) = delete;
    /// Efficiently move a histogram.
    ///
    /// After this operation, the moved-from object is invalid.
-   RHist<BinContentType> &operator=(RHist<BinContentType> &&) = default;
+   RHist &operator=(RHist &&) = default;
 
    ~RHist() = default;
 
@@ -104,7 +150,7 @@ public:
 
    const std::vector<RAxisVariant> &GetAxes() const { return fEngine.GetAxes(); }
    std::size_t GetNDimensions() const { return fEngine.GetNDimensions(); }
-   std::size_t GetTotalNBins() const { return fEngine.GetTotalNBins(); }
+   std::uint64_t GetTotalNBins() const { return fEngine.GetTotalNBins(); }
 
    std::uint64_t GetNEntries() const { return fStats.GetNEntries(); }
    /// \copydoc RHistStats::ComputeNEffectiveEntries()
@@ -168,10 +214,21 @@ public:
    /// Throws an exception if the axes configurations are not identical.
    ///
    /// \param[in] other another histogram
-   void Add(const RHist<BinContentType> &other)
+   void Add(const RHist &other)
    {
       fEngine.Add(other.fEngine);
       fStats.Add(other.fStats);
+   }
+
+   /// Add all bin contents and statistics of another histogram using atomic instructions.
+   ///
+   /// Throws an exception if the axes configurations are not identical.
+   ///
+   /// \param[in] other another histogram that must not be modified during the operation
+   void AddAtomic(const RHist &other)
+   {
+      fEngine.AddAtomic(other.fEngine);
+      fStats.AddAtomic(other.fStats);
    }
 
    /// Clear all bin contents and statistics.
@@ -186,9 +243,25 @@ public:
    /// Copying all bin contents can be an expensive operation, depending on the number of bins.
    ///
    /// \return the cloned object
-   RHist<BinContentType> Clone() const
+   RHist Clone() const
    {
-      RHist<BinContentType> h(fEngine.Clone());
+      RHist h(fEngine.Clone());
+      h.fStats = fStats;
+      return h;
+   }
+
+   /// Convert this histogram to a different bin content type.
+   ///
+   /// There is no bounds checking to make sure that the converted values can be represented. Note that it is not
+   /// possible to convert to RBinWithError since the information about individual weights has been lost since filling.
+   ///
+   /// Converting all bin contents can be an expensive operation, depending on the number of bins.
+   ///
+   /// \return the converted object
+   template <typename U>
+   RHist<U> Convert() const
+   {
+      RHist<U> h(fEngine.template Convert<U>());
       h.fStats = fStats;
       return h;
    }
@@ -204,7 +277,8 @@ public:
    /// If one of the arguments is outside the corresponding axis and flow bins are disabled, the entry will be silently
    /// discarded.
    ///
-   /// Throws an exception if the number of arguments does not match the axis configuration.
+   /// Throws an exception if the number of arguments does not match the axis configuration, or if an argument cannot be
+   /// converted for the axis type at run-time.
    ///
    /// \param[in] args the arguments for each axis
    /// \par See also
@@ -219,8 +293,7 @@ public:
 
    /// Fill an entry into the histogram with a weight.
    ///
-   /// This overload is only available for floating-point bin content types (see
-   /// \ref RHistEngine::SupportsWeightedFilling).
+   /// This overload is not available for integral bin content types (see \ref RHistEngine::SupportsWeightedFilling).
    ///
    /// \code
    /// ROOT::Experimental::RHist<float> hist({/* two dimensions */});
@@ -231,7 +304,8 @@ public:
    /// If one of the arguments is outside the corresponding axis and flow bins are disabled, the entry will be silently
    /// discarded.
    ///
-   /// Throws an exception if the number of arguments does not match the axis configuration.
+   /// Throws an exception if the number of arguments does not match the axis configuration, or if an argument cannot be
+   /// converted for the axis type at run-time.
    ///
    /// \param[in] args the arguments for each axis
    /// \param[in] weight the weight for this entry
@@ -257,12 +331,13 @@ public:
    /// ROOT::Experimental::RHist<float> hist({/* two dimensions */});
    /// hist.Fill(8.5, 10.5, ROOT::Experimental::RWeight(0.8));
    /// \endcode
-   /// This is only available for floating-point bin content types (see \ref RHistEngine::SupportsWeightedFilling).
+   /// This is not available for integral bin content types (see \ref RHistEngine::SupportsWeightedFilling).
    ///
    /// If one of the arguments is outside the corresponding axis and flow bins are disabled, the entry will be silently
    /// discarded.
    ///
-   /// Throws an exception if the number of arguments does not match the axis configuration.
+   /// Throws an exception if the number of arguments does not match the axis configuration, or if an argument cannot be
+   /// converted for the axis type at run-time.
    ///
    /// \param[in] args the arguments for each axis
    /// \par See also
@@ -271,8 +346,22 @@ public:
    template <typename... A>
    void Fill(const A &...args)
    {
-      fEngine.Fill(args...);
-      fStats.Fill(args...);
+      static_assert(sizeof...(A) >= 1, "need at least one argument to Fill");
+      if constexpr (sizeof...(A) >= 1) {
+         fEngine.Fill(args...);
+         fStats.Fill(args...);
+      }
+   }
+
+   /// Scale all histogram bin contents and statistics.
+   ///
+   /// This method is not available for integral bin content types.
+   ///
+   /// \param[in] factor the scale factor
+   void Scale(double factor)
+   {
+      fEngine.Scale(factor);
+      fStats.Scale(factor);
    }
 
    /// %ROOT Streamer function to throw when trying to store an object of this class.

@@ -8,7 +8,8 @@
 #include "RBinIndex.hxx"
 
 #include <cassert>
-#include <cstddef>
+#include <cstddef> // for std::ptrdiff_t
+#include <cstdint>
 #include <iterator>
 
 namespace ROOT {
@@ -17,7 +18,7 @@ namespace Experimental {
 // forward declarations for friend declaration
 class RBinIndexRange;
 namespace Internal {
-RBinIndexRange CreateBinIndexRange(RBinIndex begin, RBinIndex end, std::size_t nNormalBins);
+static RBinIndexRange CreateBinIndexRange(RBinIndex begin, RBinIndex end, std::uint64_t nNormalBins);
 } // namespace Internal
 
 /**
@@ -40,14 +41,14 @@ for (auto index : axis.GetFullRange()) {
 Feedback is welcome!
 */
 class RBinIndexRange final {
-   friend RBinIndexRange Internal::CreateBinIndexRange(RBinIndex, RBinIndex, std::size_t);
+   friend RBinIndexRange Internal::CreateBinIndexRange(RBinIndex, RBinIndex, std::uint64_t);
 
    /// The begin of the range (inclusive)
    RBinIndex fBegin;
    /// The end of the range (exclusive)
    RBinIndex fEnd;
    /// The number of normal bins, after which iteration advances to RBinIndex::Overflow()
-   std::size_t fNNormalBins = 0;
+   std::uint64_t fNNormalBins = 0;
 
 public:
    /// Construct an invalid bin index range.
@@ -64,12 +65,12 @@ public:
 
    friend bool operator!=(const RBinIndexRange &lhs, const RBinIndexRange &rhs) { return !(lhs == rhs); }
 
-   /// %Iterator over RBinIndex.
-   class Iterator final {
+   /// Iterator over RBinIndex.
+   class RIterator final {
       /// The current bin index
       RBinIndex fIndex;
       /// The number of normal bins, after which iteration advances to RBinIndex::Overflow()
-      std::size_t fNNormalBins = 0;
+      std::uint64_t fNNormalBins = 0;
 
    public:
       using difference_type = std::ptrdiff_t;
@@ -78,10 +79,10 @@ public:
       using reference = RBinIndex;
       using iterator_category = std::input_iterator_tag;
 
-      Iterator() = default;
-      Iterator(RBinIndex index, std::size_t nNormalBins) : fIndex(index), fNNormalBins(nNormalBins) {}
+      RIterator() = default;
+      RIterator(RBinIndex index, std::uint64_t nNormalBins) : fIndex(index), fNNormalBins(nNormalBins) {}
 
-      Iterator &operator++()
+      RIterator &operator++()
       {
          if (fIndex.IsUnderflow()) {
             fIndex = 0;
@@ -98,9 +99,9 @@ public:
          }
          return *this;
       }
-      Iterator operator++(int)
+      RIterator operator++(int)
       {
-         Iterator old = *this;
+         RIterator old = *this;
          operator++();
          return old;
       }
@@ -108,15 +109,15 @@ public:
       RBinIndex operator*() const { return fIndex; }
       const RBinIndex *operator->() const { return &fIndex; }
 
-      friend bool operator==(const Iterator &lhs, const Iterator &rhs)
+      friend bool operator==(const RIterator &lhs, const RIterator &rhs)
       {
          return lhs.fIndex == rhs.fIndex && lhs.fNNormalBins == rhs.fNNormalBins;
       }
-      friend bool operator!=(const Iterator &lhs, const Iterator &rhs) { return !(lhs == rhs); }
+      friend bool operator!=(const RIterator &lhs, const RIterator &rhs) { return !(lhs == rhs); }
    };
 
-   Iterator begin() const { return Iterator(fBegin, fNNormalBins); }
-   Iterator end() const { return Iterator(fEnd, fNNormalBins); }
+   RIterator begin() const { return RIterator(fBegin, fNNormalBins); }
+   RIterator end() const { return RIterator(fEnd, fNNormalBins); }
 };
 
 namespace Internal {
@@ -130,7 +131,7 @@ namespace Internal {
 /// \param[in] begin the begin of the bin index range (inclusive)
 /// \param[in] end the end of the bin index range (exclusive)
 /// \param[in] nNormalBins the number of normal bins, after which iteration advances to RBinIndex::Overflow()
-RBinIndexRange CreateBinIndexRange(RBinIndex begin, RBinIndex end, std::size_t nNormalBins)
+static RBinIndexRange CreateBinIndexRange(RBinIndex begin, RBinIndex end, std::uint64_t nNormalBins)
 {
    RBinIndexRange range;
    range.fBegin = begin;

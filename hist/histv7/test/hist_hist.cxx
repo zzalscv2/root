@@ -16,7 +16,9 @@ TEST(RHist, Constructor)
    static constexpr std::size_t Bins = 20;
    const RRegularAxis regularAxis(Bins, {0, Bins});
 
-   RHist<int> hist({regularAxis, regularAxis});
+   // The most generic constructor takes a vector of axis objects.
+   const std::vector<RAxisVariant> axes = {regularAxis, regularAxis};
+   RHist<int> hist(axes);
    EXPECT_EQ(hist.GetNDimensions(), 2);
    const auto &engine = hist.GetEngine();
    EXPECT_EQ(engine.GetNDimensions(), 2);
@@ -26,13 +28,31 @@ TEST(RHist, Constructor)
    // Both axes include underflow and overflow bins.
    EXPECT_EQ(hist.GetTotalNBins(), (Bins + 2) * (Bins + 2));
 
+   // Test other constructors, including move-assignment.
    hist = RHist<int>(Bins, {0, Bins});
    ASSERT_EQ(hist.GetNDimensions(), 1);
-   auto *regular = std::get_if<RRegularAxis>(&hist.GetAxes()[0]);
+   auto *regular = hist.GetAxes()[0].GetRegularAxis();
    ASSERT_TRUE(regular != nullptr);
    EXPECT_EQ(regular->GetNNormalBins(), Bins);
    EXPECT_EQ(regular->GetLow(), 0);
    EXPECT_EQ(regular->GetHigh(), Bins);
+   // std::make_pair will take the types of the arguments, std::size_t in this case.
+   hist = RHist<int>(Bins, std::make_pair(0, Bins));
+   EXPECT_EQ(hist.GetNDimensions(), 1);
+
+   // Brace-enclosed initializer list
+   hist = RHist<int>({regularAxis});
+   EXPECT_EQ(hist.GetNDimensions(), 1);
+   hist = RHist<int>({regularAxis, regularAxis});
+   EXPECT_EQ(hist.GetNDimensions(), 2);
+
+   // Templated constructors
+   hist = RHist<int>(regularAxis);
+   EXPECT_EQ(hist.GetNDimensions(), 1);
+   hist = RHist<int>(regularAxis, regularAxis);
+   EXPECT_EQ(hist.GetNDimensions(), 2);
+   hist = RHist<int>(regularAxis, regularAxis, regularAxis);
+   EXPECT_EQ(hist.GetNDimensions(), 3);
 }
 
 TEST(RHist, Add)
@@ -50,6 +70,45 @@ TEST(RHist, Add)
    EXPECT_EQ(histA.GetNEntries(), 2);
    EXPECT_EQ(histA.GetBinContent(RBinIndex(8)), 1);
    EXPECT_EQ(histA.GetBinContent(RBinIndex(9)), 1);
+}
+
+TEST(RHist, AddAtomic)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHist<int> histA({axis});
+   RHist<int> histB({axis});
+
+   histA.Fill(8.5);
+   histB.Fill(9.5);
+
+   histA.AddAtomic(histB);
+
+   EXPECT_EQ(histA.GetNEntries(), 2);
+   EXPECT_EQ(histA.GetBinContent(RBinIndex(8)), 1);
+   EXPECT_EQ(histA.GetBinContent(RBinIndex(9)), 1);
+}
+
+TEST(RHist, StressAddAtomic)
+{
+   static constexpr std::size_t NThreads = 4;
+   static constexpr std::size_t NAddsPerThread = 10000;
+   static constexpr std::size_t NAdds = NThreads * NAddsPerThread;
+
+   // Fill a single bin, to maximize contention.
+   const RRegularAxis axis(1, {0, 1});
+   RHist<int> histA({axis});
+   RHist<int> histB({axis});
+   histB.Fill(0.5);
+
+   StressInParallel(NThreads, [&] {
+      for (std::size_t i = 0; i < NAddsPerThread; i++) {
+         histA.AddAtomic(histB);
+      }
+   });
+
+   EXPECT_EQ(histA.GetNEntries(), NAdds);
+   EXPECT_EQ(histA.GetBinContent(0), NAdds);
 }
 
 TEST(RHist, Clear)
@@ -92,6 +151,22 @@ TEST(RHist, Clone)
    EXPECT_EQ(histB.GetBinContent(9), 1);
 }
 
+TEST(RHist, Convert)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHist<int> histI({axis});
+
+   histI.Fill(8.5);
+
+   RHist<float> histF = histI.Convert<float>();
+   ASSERT_EQ(histF.GetNDimensions(), 1);
+   ASSERT_EQ(histF.GetTotalNBins(), Bins + 2);
+
+   EXPECT_EQ(histF.GetNEntries(), 1);
+   EXPECT_EQ(histF.GetBinContent(8), 1);
+}
+
 TEST(RHist, Fill)
 {
    static constexpr std::size_t Bins = 20;
@@ -105,10 +180,10 @@ TEST(RHist, Fill)
    std::array<RBinIndex, 1> indices = {9};
    EXPECT_EQ(hist.GetBinContent(indices), 1);
 
-   EXPECT_EQ(hist.GetStats().GetNEntries(), 2);
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeNEffectiveEntries(), 2);
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeMean(), 9);
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeStdDev(), 0.5);
+   EXPECT_EQ(hist.GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.ComputeMean(), 9);
+   EXPECT_FLOAT_EQ(hist.ComputeStdDev(), 0.5);
 }
 
 TEST(RHist, FillWeight)
@@ -120,9 +195,76 @@ TEST(RHist, FillWeight)
    hist.Fill(8.5, RWeight(0.8));
    hist.Fill(std::make_tuple(9.5), RWeight(0.9));
 
-   EXPECT_EQ(hist.GetStats().GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.GetBinContent(RBinIndex(8)), 0.8);
+   std::array<RBinIndex, 1> indices = {9};
+   EXPECT_FLOAT_EQ(hist.GetBinContent(indices), 0.9);
+
+   EXPECT_EQ(hist.GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW(), 1.7);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW2(), 1.45);
    // Cross-checked with TH1
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeNEffectiveEntries(), 1.9931034);
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeMean(), 9.0294118);
-   EXPECT_FLOAT_EQ(hist.GetStats().ComputeStdDev(), 0.49913420);
+   EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 1.9931034);
+   EXPECT_FLOAT_EQ(hist.ComputeMean(), 9.0294118);
+   EXPECT_FLOAT_EQ(hist.ComputeStdDev(), 0.49913420);
+}
+
+TEST(RHist, FillCategorical)
+{
+   const std::vector<std::string> categories = {"a", "b", "c"};
+   const RCategoricalAxis axis(categories);
+   RHist<int> hist({axis});
+
+   hist.Fill("b");
+   hist.Fill(std::make_tuple("c"));
+
+   EXPECT_EQ(hist.GetBinContent(RBinIndex(1)), 1);
+   std::array<RBinIndex, 1> indices = {2};
+   EXPECT_EQ(hist.GetBinContent(indices), 1);
+
+   EXPECT_EQ(hist.GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 2);
+}
+
+TEST(RHist, FillCategoricalWeight)
+{
+   const std::vector<std::string> categories = {"a", "b", "c"};
+   const RCategoricalAxis axis(categories);
+   RHist<float> hist({axis});
+
+   hist.Fill("b", RWeight(0.8));
+   hist.Fill(std::make_tuple("c"), RWeight(0.9));
+
+   EXPECT_FLOAT_EQ(hist.GetBinContent(RBinIndex(1)), 0.8);
+   std::array<RBinIndex, 1> indices = {2};
+   EXPECT_FLOAT_EQ(hist.GetBinContent(indices), 0.9);
+
+   EXPECT_EQ(hist.GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW(), 1.7);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW2(), 1.45);
+   // Cross-checked with TH1
+   EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 1.9931034);
+}
+
+TEST(RHist, Scale)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHist<float> hist({axis});
+
+   hist.Fill(8.5, RWeight(0.8));
+   hist.Fill(9.5, RWeight(0.9));
+
+   static constexpr double Factor = 0.8;
+   hist.Scale(Factor);
+
+   EXPECT_FLOAT_EQ(hist.GetBinContent(8), Factor * 0.8);
+   EXPECT_FLOAT_EQ(hist.GetBinContent(9), Factor * 0.9);
+
+   EXPECT_EQ(hist.GetNEntries(), 2);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW(), Factor * 1.7);
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW2(), Factor * Factor * 1.45);
+   // Cross-checked with TH1 - unchanged compared to FillWeight because the factor cancels out.
+   EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 1.9931034);
+   EXPECT_FLOAT_EQ(hist.ComputeMean(), 9.0294118);
+   EXPECT_FLOAT_EQ(hist.ComputeStdDev(), 0.49913420);
 }

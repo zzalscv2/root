@@ -4,6 +4,7 @@
 /// Basics of RHist, including filling and adding them.
 ///
 /// \macro_code
+/// \macro_output
 ///
 /// \date September 2025
 /// \author The ROOT Team
@@ -17,11 +18,11 @@
 #include <random>
 #include <variant>
 
-// It is currently not possible to directly draw RHist's, so this function implements an output with ASCII characters.
+// It is currently not possible to directly draw an RHist, so this function implements an output with ASCII characters.
 static void DrawHistogram(const ROOT::Experimental::RHist<int> &hist)
 {
    // Get the axis object from the histogram.
-   auto &axis = std::get<ROOT::Experimental::RRegularAxis>(hist.GetAxes()[0]);
+   auto &axis = hist.GetAxes()[0];
 
    // Print (some of) the global statistics.
    std::cout << "entries = " << hist.GetNEntries();
@@ -56,10 +57,10 @@ static void DrawHistogram(const ROOT::Experimental::RHist<int> &hist)
 void hist001_RHist_basics()
 {
    // Create an axis that can be used for multiple histograms.
-   ROOT::Experimental::RRegularAxis axis(40, {0, 20});
+   ROOT::Experimental::RRegularAxis axis(40, {0.0, 20.0});
 
-   // Create a first histograms and fill with random values.
-   ROOT::Experimental::RHist<int> hist1({axis});
+   // Create a first histogram and fill with random values.
+   ROOT::Experimental::RHist<int> hist1(axis);
 
    // Create a normal distribution with mean 5.0 and stddev 2.0.
    std::mt19937 gen;
@@ -74,7 +75,7 @@ void hist001_RHist_basics()
    std::cout << "\n";
 
    // Create a second histogram and fill with random values of a different distribution.
-   ROOT::Experimental::RHist<int> hist2({axis});
+   ROOT::Experimental::RHist<int> hist2(axis);
    std::normal_distribution normal2(13.0, 4.0);
    for (std::size_t i = 0; i < 1500; i++) {
       hist2.Fill(normal2(gen));
@@ -84,7 +85,7 @@ void hist001_RHist_basics()
    std::cout << "\n";
 
    // Create a third, merged histogram from the two previous two.
-   ROOT::Experimental::RHist<int> hist3({axis});
+   ROOT::Experimental::RHist<int> hist3(axis);
    hist3.Add(hist1);
    hist3.Add(hist2);
    std::cout << "hist3 with expected entries = " << (hist1.GetNEntries() + hist2.GetNEntries()) << "\n";

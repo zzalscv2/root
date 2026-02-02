@@ -130,9 +130,9 @@ public:
    virtual void     SetShowProjectionX(Int_t nbins=1);  // *MENU*
    virtual void     SetShowProjectionY(Int_t nbins=1);  // *MENU*
    virtual void     SetShowProjectionXY(Int_t nbinsY=1, Int_t nbinsX=1);  // *MENU*
-           TH1     *ShowBackground(Int_t niter=20, Option_t *option="same") override;
-           Int_t    ShowPeaks(Double_t sigma=2, Option_t *option="", Double_t threshold=0.05) override; // *MENU*
-           void     Smooth(Int_t ntimes=1, Option_t *option="") override; // *MENU*
+   virtual TH1     *ShowBackground2D(Int_t nIterX = 20, Int_t nIterY = 20, Option_t *option = "same");
+   Int_t            ShowPeaks(Double_t sigma = 2, Option_t *option = "", Double_t threshold = 0.05) override; // *MENU*
+   void             Smooth(Int_t ntimes = 1, Option_t *option = "") override;                                 // *MENU*
 
    ClassDefOverride(TH2,5)  //2-Dim histogram base class
 };
@@ -325,7 +325,7 @@ public:
 
 protected:
    Double_t RetrieveBinContent(Int_t bin) const override { return Double_t (fArray[bin]); }
-   void     UpdateBinContent(Int_t bin, Double_t content) override { fArray[bin] = Int_t (content); }
+   void     UpdateBinContent(Int_t bin, Double_t content) override { fArray[bin] = Long64_t (content); }
 
    ClassDefOverride(TH2L,0)  //2-Dim histograms (one 64 bit integer per channel)
 };

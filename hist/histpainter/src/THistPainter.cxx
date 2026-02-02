@@ -355,6 +355,7 @@ using `TH1::GetOption`:
 | "NOSTACK"  | Histograms in the stack are all paint in the same pad as if the option `SAME` had been specified.|
 | "NOSTACKB" | Histograms are  drawn next to each other as bar charts.|
 | "PADS"     | The current pad/canvas is subdivided into a number of pads equal to the number of histograms in the stack and each histogram is paint into a separate pad.|
+| "PADSn"    | Like PADS but the current pad/canvas is subdivided into a `n` columns, automatically calculating the number of rows.|
 | "PFC"      | Palette Fill Color: stack's fill color is taken in the current palette. |
 | "PLC"      | Palette Line Color: stack's line color is taken in the current palette. |
 | "PMC"      | Palette Marker Color: stack's marker color is taken in the current palette. |
@@ -1051,7 +1052,7 @@ is the color change between cells.
 
 The color palette in TStyle can be modified via `gStyle->SetPalette()`.
 
-All the non-empty bins are painted. Empty bins (bins with content and error equal to 0) are 
+All the non-empty bins are painted. Empty bins (bins with content and error equal to 0) are
 not painted unless some bins have a negative content because in that case the null bins
 might be not empty.
 
@@ -2751,9 +2752,10 @@ the same pad as if the option `SAME` had been specified. This allows to
 compute X and Y scales common to all the histograms, like
 `TMultiGraph` does for graphs.
 
-If the option `PADS` is specified, the current pad/canvas is
-subdivided into a number of pads equal to the number of histograms and each
-histogram is paint into a separate pad.
+If the option `PADS` is specified, the current pad/canvas is subdivided into
+a number of pads equal to the number of histograms and each histogram is paint
+into a separate pad. With `PADSn`, the current pad/canvas is subdivided into
+`n` columns, automatically calculating the number of rows.
 
 The following example shows various types of stacks (hist023_THStack_simple.C).
 
@@ -6043,7 +6045,7 @@ void THistPainter::PaintContour(Option_t *option)
    TList *list = nullptr;
    TGraph *graph = nullptr;
    std::vector<Int_t> np;
-   if (Hoption.Contour == 1) {
+   if (Hoption.Contour == 1 || (Hoption.List && (Hoption.Contour == 11 || Hoption.Contour == 12 || Hoption.Contour == 13))) {
       np.resize(ncontour);
       for (i=0;i<ncontour;i++)
          np[i] = 0;
@@ -6168,7 +6170,8 @@ void THistPainter::PaintContour(Option_t *option)
                if (Hoption.Contour != 1) {
                   fH->TAttLine::Modify();
                   gPad->PaintPolyLine(2,xarr.data()+ix-1,yarr.data()+ix-1);
-                  continue;
+                  if ((Hoption.Contour != 11 && Hoption.Contour != 12 && Hoption.Contour != 13) || !Hoption.List)
+                     continue;
                }
 
                ipoly = itarr[ix-1];
@@ -6190,7 +6193,10 @@ void THistPainter::PaintContour(Option_t *option)
    Int_t first = ncontour;
    std::vector<Int_t> polysort;
    Int_t contListNb;
-   if (Hoption.Contour != 1) goto theEND;
+   if (Hoption.Contour != 1) {
+       if (!Hoption.List || (Hoption.Contour != 11 && Hoption.Contour != 12 && Hoption.Contour != 13))
+          goto theEND;
+   }
 
    //The 2 points line generated above are now sorted/merged to generate
    //a list of consecutive points.
@@ -6209,14 +6215,15 @@ void THistPainter::PaintContour(Option_t *option)
    k = 0;
    for (ipoly=first-1;ipoly>=0;ipoly--) {polysort[k] = ipoly; k++;}
    for (ipoly=first;ipoly<ncontour;ipoly++) {polysort[k] = ipoly; k++;}
-   // we can now draw sorted contours
+   // if Contour==1 we can now draw sorted contours, otherwise (11,12,13) just store
    contListNb = 0;
-   fH->SetFillStyle(1001);
+   if (Hoption.Contour == 1) fH->SetFillStyle(1001);
    for (k=0;k<ncontour;k++) {
       ipoly = polysort[k];
-      if (np[ipoly] == 0) continue;
       if (Hoption.List) list = (TList*)contours->At(contListNb);
       contListNb++;
+      if (np[ipoly] == 0)
+         continue;
       Double_t *xx = polys[ipoly]->GetX();
       Double_t *yy = polys[ipoly]->GetY();
       istart = 0;
@@ -6249,12 +6256,22 @@ void THistPainter::PaintContour(Option_t *option)
          }
          theColor = Int_t((ipoly+0.99)*Float_t(ncolors)/Float_t(ndivz));
          icol = gStyle->GetColorPalette(theColor);
-         if (ndivz > 1) fH->SetFillColor(icol);
-         fH->TAttFill::Modify();
-         gPad->PaintFillArea(iplus-iminus+1,xp.data()+iminus,yp.data()+iminus);
+         if (Hoption.Contour == 1) {
+            if (ndivz > 1) fH->SetFillColor(icol);
+            fH->TAttFill::Modify();
+            gPad->PaintFillArea(iplus-iminus+1,xp.data()+iminus,yp.data()+iminus);
+         }
          if (Hoption.List) {
             graph = new TGraph(iplus-iminus+1,xp.data()+iminus,yp.data()+iminus);
-            graph->SetFillColor(icol);
+            if (Hoption.Contour == 1)
+                graph->SetFillColor(icol);
+            else if (Hoption.Contour == 11)
+                graph->SetLineColor(icol);
+            else if (Hoption.Contour == 12) {
+                mode = icol%5;
+                if (mode == 0) mode = 5;
+                graph->SetLineStyle(mode);
+            }
             graph->SetLineWidth(fH->GetLineWidth());
             list->Add(graph);
          }
@@ -9881,25 +9898,28 @@ void THistPainter::PaintTH2PolyColorLevels(Option_t *)
       theColor = Int_t((color+0.99)*Float_t(ncolors)/Float_t(ndivz));
       if (theColor > ncolors-1) theColor = ncolors-1;
 
+      auto rootColor = gStyle->GetColorPalette(theColor);
+
       // Paint the TGraph bins.
       if (poly->IsA() == TGraph::Class()) {
          TGraph *g  = (TGraph*)poly;
-         g->SetFillColor(gStyle->GetColorPalette(theColor));
+         auto origin = g->GetFillColor();
+         g->SetFillColor(rootColor);
          g->TAttFill::Modify();
          g->Paint("F");
+         g->SetFillColor(origin);
       }
 
       // Paint the TMultiGraph bins.
       if (poly->IsA() == TMultiGraph::Class()) {
          TMultiGraph *mg = (TMultiGraph*)poly;
-         TList *gl = mg->GetListOfGraphs();
-         if (!gl) return;
-         TGraph *g;
-         TIter nextg(gl);
-         while ((g = (TGraph*) nextg())) {
-            g->SetFillColor(gStyle->GetColorPalette(theColor));
+         TIter nextg(mg->GetListOfGraphs());
+         while (auto g = (TGraph*) nextg()) {
+            auto origin = g->GetFillColor();
+            g->SetFillColor(rootColor);
             g->TAttFill::Modify();
             g->Paint("F");
+            g->SetFillColor(origin);
          }
       }
    }

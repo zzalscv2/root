@@ -160,6 +160,7 @@ public:
 
    virtual            ~TCollection();
    virtual void       Add(TObject *obj) = 0;
+   virtual void       Add(TObject */*obj*/, Option_t */*opt*/) { AbstractMethod("Add"); };
    void               AddVector(TObject *obj1, ...);
    virtual void       AddAll(const TCollection *col);
    Bool_t             AssertClass(TClass *cl) const;
@@ -177,6 +178,7 @@ public:
    TObject           *operator()(const char *name) const;
    TObject           *FindObject(const TObject *obj) const override;
    virtual Int_t      GetEntries() const { return GetSize(); }
+   inline std::size_t size() const { return GetEntries(); }
    const char        *GetName() const override;
    virtual TObject  **GetObjectRef(const TObject *obj) const = 0;
    /// Return the *capacity* of the collection, i.e. the current total amount of space that has been allocated so far.

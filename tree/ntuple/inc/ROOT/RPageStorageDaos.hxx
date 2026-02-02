@@ -34,7 +34,6 @@ namespace ROOT {
 
 namespace Internal {
 class RCluster;
-class RClusterPool;
 } // namespace Internal
 
 namespace Experimental {
@@ -77,7 +76,8 @@ struct RDaosNTupleAnchor {
    /// The object class for user data OIDs, e.g. `SX`
    std::string fObjClass{};
 
-   bool operator ==(const RDaosNTupleAnchor &other) const {
+   bool operator==(const RDaosNTupleAnchor &other) const
+   {
       return fVersionAnchor == other.fVersionAnchor && fVersionEpoch == other.fVersionEpoch &&
              fVersionMajor == other.fVersionMajor && fVersionMinor == other.fVersionMinor &&
              fVersionPatch == other.fVersionPatch && fNBytesHeader == other.fNBytesHeader &&
@@ -159,8 +159,6 @@ private:
    std::unique_ptr<RDaosContainer> fDaosContainer;
    /// A URI to a DAOS pool of the form 'daos://pool-label/container-label'
    std::string fURI;
-   /// The cluster pool asynchronously preloads the next few clusters
-   std::unique_ptr<ROOT::Internal::RClusterPool> fClusterPool;
 
    ROOT::Internal::RNTupleDescriptorBuilder fDescriptorBuilder;
 

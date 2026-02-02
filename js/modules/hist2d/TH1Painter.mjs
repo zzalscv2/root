@@ -6,7 +6,8 @@ import { getTF1Value } from '../base/func.mjs';
 
 
 const PadDrawOptions = ['LOGXY', 'LOGX', 'LOGY', 'LOGZ', 'LOGV', 'LOG', 'LOG2X', 'LOG2Y', 'LOG2',
-                        'LNX', 'LNY', 'LN', 'GRIDXY', 'GRIDX', 'GRIDY', 'TICKXY', 'TICKX', 'TICKY', 'TICKZ', 'FB', 'GRAYSCALE'];
+                        'LNX', 'LNY', 'LN', 'GRIDXY', 'GRIDX', 'GRIDY',
+                        'TICKXY2', 'TICKX2', 'TICKY2', 'TICKXY', 'TICKX', 'TICKY', 'TICKZ', 'FB', 'GRAYSCALE'];
 
 /**
  * @summary Painter for TH1 classes
@@ -40,30 +41,12 @@ class TH1Painter extends THistPainter {
       return histo;
    }
 
-   /** @summary Convert TH1K into normal binned histogram */
-   convertTH1K() {
-      const histo = this.getObject();
-      if (histo.fReady)
-         return;
-
-      const arr = histo.fArray, entries = histo.fEntries; // array of values
-      histo.fNcells = histo.fXaxis.fNbins + 2;
-      histo.fArray = new Float64Array(histo.fNcells).fill(0);
-      for (let n = 0; n < histo.fNIn; ++n)
-         histo.Fill(arr[n]);
-      histo.fReady = 1;
-      histo.fEntries = entries;
-   }
-
    /** @summary Scan content of 1-D histogram
      * @desc Detect min/max values for x and y axis
      * @param {boolean} when_axis_changed - true when zooming was changed, some checks may be skipped */
    scanContent(when_axis_changed) {
       if (when_axis_changed && !this.nbinsx)
          when_axis_changed = false;
-
-      if (this.isTH1K())
-         this.convertTH1K();
 
       const histo = this.getHisto(),
             o = this.getOptions();

@@ -198,10 +198,26 @@ set(BASE_SOURCES
   src/TVirtualX.cxx
 )
 
+set(RELATIVE_BASE_INC_HEADERS ${BASE_HEADERS})
+list(TRANSFORM RELATIVE_BASE_INC_HEADERS PREPEND inc/)
+
 # only here complete list of headers can be propogated to parent cmake file
 set_property(TARGET Core APPEND PROPERTY DICT_HEADERS ${BASE_HEADERS})
 
 target_sources(Core PRIVATE ${BASE_SOURCES})
+
+if(NOT CMAKE_VERSION VERSION_LESS "3.23.0") # https://discourse.cmake.org/t/file-set-xyz-is-listed-in-interface-file-sets-of-w-but-has-not-been-exported/9131/3
+  target_sources(
+      Core
+      PRIVATE
+      FILE_SET private_header_files
+      TYPE HEADERS
+      BASE_DIRS inc/ src/
+      FILES
+          ${RELATIVE_BASE_INC_HEADERS}
+          src/TListOfTypes.h
+  )
+endif()
 
 target_include_directories(Core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
@@ -211,16 +227,27 @@ if(ROOT_NEED_STDCXXFS)
     target_link_libraries(Core PRIVATE stdc++fs)
 endif()
 
-# This code about the LIB_CORE_NAME define is important for TROOT::GetLibDir()
-get_target_property(core_prefix Core PREFIX)
-get_target_property(core_suffix Core SUFFIX)
-get_target_property(core_soversion Core SOVERSION)
-if(core_soversion)
-    set(full_core_filename "${core_prefix}Core${core_suffix}.${core_soversion}")
+# This code about the LIB_CORE_NAME define is important for TROOT::GetSharedLibDir()
+set(full_core_filename $<TARGET_FILE_NAME:Core>)
+
+# Absolue CMAKE_INSTALL_<dir> paths are discouraged in CMake, but some
+# packagers use them anyway. So we support it.
+if(IS_ABSOLUTE ${CMAKE_INSTALL_INCLUDEDIR})
+  set(install_lib_to_include "${CMAKE_INSTALL_INCLUDEDIR}")
 else()
-    set(full_core_filename "${core_prefix}Core${core_suffix}")
+  if(IS_ABSOLUTE ${CMAKE_INSTALL_LIBDIR})
+    set(libdir "${CMAKE_INSTALL_LIBDIR}")
+  else()
+    set(libdir "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+  endif()
+  file(RELATIVE_PATH install_lib_to_include "${libdir}" "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}")
+  unset(libdir)
 endif()
-target_compile_options(Core PRIVATE -DLIB_CORE_NAME=${full_core_filename})
+
+target_compile_options(Core PRIVATE -DLIB_CORE_NAME=${full_core_filename}
+                                    -DINSTALL_LIB_TO_INCLUDE="${install_lib_to_include}"
+)
+add_dependencies(Core ensure_build_tree_marker)
 
 if(PCRE2_FOUND)
   target_link_libraries(Core PRIVATE PCRE2::PCRE2)

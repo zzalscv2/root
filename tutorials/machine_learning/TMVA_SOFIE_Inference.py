@@ -14,24 +14,20 @@
 ### \macro_output
 ### \author Lorenzo Moneta
 
-import ROOT
 import numpy as np
-
-
-ROOT.TMVA.PyMethodBase.PyInitialize()
-
+import ROOT
 
 # check if the input file exists
-modelFile = "Higgs_trained_model.h5"
-if (ROOT.gSystem.AccessPathName(modelFile)) :
-    ROOT.Info("TMVA_SOFIE_RDataFrame","You need to run TMVA_Higgs_Classification.C to generate the Keras trained model")
-    exit()
+modelFile = "Higgs_trained_model.keras"
+
+if not exists(modelFile):
+    raise FileNotFoundError("You need to run TMVA_Higgs_Classification.C to generate the Keras trained model")
 
 
 # parse the input Keras model into RModel object
 model = ROOT.TMVA.Experimental.SOFIE.PyKeras.Parse(modelFile)
 
-generatedHeaderFile = modelFile.replace(".h5",".hxx")
+generatedHeaderFile = modelFile.replace(".keras",".hxx")
 print("Generating inference code for the Keras model from ",modelFile,"in the header ", generatedHeaderFile)
 #Generating inference code
 model.Generate()
@@ -39,12 +35,12 @@ model.OutputGenerated(generatedHeaderFile)
 model.PrintGenerated()
 
 # now compile using ROOT JIT trained model
-modelName = modelFile.replace(".h5","")
+modelName = modelFile.replace(".keras","")
 print("compiling SOFIE model ", modelName)
 ROOT.gInterpreter.Declare('#include "' + generatedHeaderFile + '"')
 
 
-generatedHeaderFile = modelFile.replace(".h5",".hxx")
+generatedHeaderFile = modelFile.replace(".keras",".hxx")
 print("Generating inference code for the Keras model from ",modelFile,"in the header ", generatedHeaderFile)
 #Generating inference
 

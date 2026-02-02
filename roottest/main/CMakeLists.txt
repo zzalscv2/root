@@ -6,16 +6,15 @@ configure_file(subdirs.root . COPYONLY)
 configure_file(nested.root . COPYONLY)
 configure_file(RNTuple.root . COPYONLY)
 
+# We should explicitly use the Python executable from the Python version that
+# was used to build ROOT. Otherwise, we risk picking up a different Python
+# version at test time.
+set(PY_TOOLS_PREFIX ${Python3_EXECUTABLE} ${ROOTSYS}/bin)
+set(TOOLS_PREFIX ${ROOTSYS}/bin)
+
 if(MSVC)
-    # the command line tools works fine in the Windows command prompt but
-    # not from CTest, so let's add Python.exe and the .py file extension
-    set(PY_TOOLS_PREFIX ${Python3_EXECUTABLE} ${ROOTSYS}/bin)
-    set(TOOLS_PREFIX ${ROOTSYS}/bin)
     set(pyext .py)
     set(exeext .exe)
-else()
-    set(PY_TOOLS_PREFIX ${ROOTSYS}/bin)
-    set(TOOLS_PREFIX ${ROOTSYS}/bin)
 endif()
 
 ############################## ROOLS TESTS ##############################
@@ -91,6 +90,11 @@ ROOTTEST_ADD_TEST(RecursiveRootls2
                   OUTREF RecursiveRootls2.ref
                   ENVIRONMENT ${test_env})
 
+ROOTTEST_ADD_TEST(RecursiveRootls3
+                  COMMAND ${TOOLS_PREFIX}/rootls${exeext} -r subdirs.root
+                  OUTREF RecursiveRootls3.ref
+                  ENVIRONMENT ${test_env})
+
 ROOTTEST_ADD_TEST(RootlsRNTuple
                   COMMAND ${TOOLS_PREFIX}/rootls${exeext} -R RNTuple.root
                   OUTREF RootlsRNTuple.ref
@@ -131,7 +135,7 @@ ROOTTEST_ADD_TEST(SimplePattern3
 
 ############################## ROORM TESTS ##############################
 ROOTTEST_ADD_TEST(SimpleRootrm1PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root victim1.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root victim1.root
                   FIXTURES_SETUP main-SimpleRootrm1PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootrm1
@@ -153,7 +157,7 @@ ROOTTEST_ADD_TEST(SimpleRootrm1Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootrm2PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root victim2.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root victim2.root
                   FIXTURES_SETUP main-SimpleRootrm2PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootrm2
@@ -175,7 +179,7 @@ ROOTTEST_ADD_TEST(SimpleRootrm2Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootrm3PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root victim3.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root victim3.root
                   FIXTURES_SETUP main-SimpleRootrm3PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootrm3
@@ -197,7 +201,7 @@ ROOTTEST_ADD_TEST(SimpleRootrm3Clean
 
 ############################# ROOMKDIR TESTS ############################
 ROOTTEST_ADD_TEST(SimpleRootmkdir1PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root target1.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root target1.root
                   FIXTURES_SETUP main-SimpleRootmkdir1PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmkdir1
@@ -219,7 +223,7 @@ ROOTTEST_ADD_TEST(SimpleRootmkdir1Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmkdir2PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root target2.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root target2.root
                   FIXTURES_SETUP main-SimpleRootmkdir2PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmkdir2
@@ -241,7 +245,7 @@ ROOTTEST_ADD_TEST(SimpleRootmkdir2Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmkdir3PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root target3.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root target3.root
                   FIXTURES_SETUP main-SimpleRootmkdir3PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmkdir3
@@ -261,13 +265,13 @@ ROOTTEST_ADD_TEST(SimpleRootmkdir3Clean
                   FIXTURES_REQUIRED main-SimpleRootmkdir3CheckOutput-fixture)
 #########################################################################
 
-############################# ROOCP TESTS ############################
+############################# ROOTCP TESTS ############################
 ROOTTEST_ADD_TEST(SimpleRootcp1PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root copy1.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy1.root
                   FIXTURES_SETUP main-SimpleRootcp1PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootcp1
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} copy1.root:hpx copy1.root:histo
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} copy1.root:hpx copy1.root:histo
                   FIXTURES_REQUIRED main-SimpleRootcp1PrepareInput-fixture
                   FIXTURES_SETUP main-SimpleRootcp1-fixture)
 
@@ -285,11 +289,11 @@ ROOTTEST_ADD_TEST(SimpleRootcp1Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootcp2PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root copy2.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy2.root
                   FIXTURES_SETUP main-SimpleRootcp2PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootcp2
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} -r copy2.root:tof copy2.root:fot
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} -r copy2.root:tof copy2.root:fot
                   FIXTURES_REQUIRED main-SimpleRootcp2PrepareInput-fixture
                   FIXTURES_SETUP main-SimpleRootcp2-fixture)
 
@@ -307,11 +311,11 @@ ROOTTEST_ADD_TEST(SimpleRootcp2Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootcp3PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root copy3.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy3.root
                   FIXTURES_SETUP main-SimpleRootcp3PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootcp3
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --replace copy3.root:hpx copy3.root:hpxpy
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --replace copy3.root:hpx copy3.root:hpxpy
                   FIXTURES_REQUIRED main-SimpleRootcp3PrepareInput-fixture
                   FIXTURES_SETUP main-SimpleRootcp3-fixture)
 
@@ -328,11 +332,11 @@ ROOTTEST_ADD_TEST(SimpleRootcp3Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootcp4PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root copy4.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy4.root
                   FIXTURES_SETUP main-SimpleRootcp4PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootcp4
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} copy4.root:hpx copy4.root:dir
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} copy4.root:hpx copy4.root:dir
                   FIXTURES_REQUIRED main-SimpleRootcp4PrepareInput-fixture
                   FIXTURES_SETUP main-SimpleRootcp4-fixture)
 
@@ -350,11 +354,11 @@ ROOTTEST_ADD_TEST(SimpleRootcp4Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootcp5PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root copy5.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy5.root
                   FIXTURES_SETUP main-SimpleRootcp5PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootcp5
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} -r copy5.root:tof copy5.root:dir
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} -r copy5.root:tof copy5.root:dir
                   FIXTURES_REQUIRED main-SimpleRootcp5PrepareInput-fixture
                   FIXTURES_SETUP main-SimpleRootcp5-fixture)
 
@@ -368,11 +372,60 @@ ROOTTEST_ADD_TEST(SimpleRootcp5CheckOutput
 ROOTTEST_ADD_TEST(SimpleRootcp5Clean
                   COMMAND ${PY_TOOLS_PREFIX}/rootrm${pyext} -r copy5.root
                   FIXTURES_REQUIRED main-SimpleRootcp5CheckOutput-fixture)
+
+ROOTTEST_ADD_TEST(RootcpReplaceRecursivePrepareInput
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root copy_replace_recursive.root
+                  FIXTURES_SETUP main-RootcpReplaceRecursivePrepareInput-fixture)
+
+ROOTTEST_ADD_TEST(RootcpReplaceRecursiveWrong
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --replace -r copy_replace_recursive.root:tof copy_replace_recursive.root
+                  FIXTURES_REQUIRED main-RootcpReplaceRecursivePrepareInput-fixture
+                  FIXTURES_SETUP main-RootcpReplaceRecursiveWrong-fixture
+                  PASSREGEX "Error in <rootcp>: copy_replace_recursive.root:tof: source and destination cannot be the same")
+
+ROOTTEST_ADD_TEST(RootcpReplaceRecursive
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --replace -r test.root:tof copy_replace_recursive.root
+                  FIXTURES_REQUIRED main-RootcpReplaceRecursiveWrong-fixture
+                  FIXTURES_SETUP main-RootcpReplaceRecursive-fixture)
+
+ROOTTEST_ADD_TEST(RootcpReplaceRecursiveCheckOutput
+                  COMMAND ${TOOLS_PREFIX}/rootls${exeext} -1 copy_replace_recursive.root:tof
+                  OUTREF RootcpReplaceRecursive.ref
+                  FIXTURES_REQUIRED main-RootcpReplaceRecursive-fixture
+                  FIXTURES_SETUP main-RootcpReplaceRecursiveCheckOutput-fixture
+                  ENVIRONMENT ${test_env})
+
+ROOTTEST_ADD_TEST(RootcpReplaceRecursiveClean
+                  COMMAND ${PY_TOOLS_PREFIX}/rootrm${pyext} -r copy_replace_recursive.root
+                  FIXTURES_REQUIRED main-RootcpReplaceRecursiveCheckOutput-fixture)
+
+
+ROOTTEST_ADD_TEST(SimpleRootcpInexistent
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} test.root:does_not_exist test.root:
+                  PASSREGEX "Error in <rootcp>: 'test.root:does_not_exist' matches no objects.")
+
+if(davix)
+ROOTTEST_ADD_TEST(RootcpReadRemote
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} root://eospublic.cern.ch//eos/root-eos/h1/dstarmb.root copy_remote.root
+                  FIXTURES_SETUP main-RootcpReadRemote-fixture)
+
+ROOTTEST_ADD_TEST(RootcpReadRemoteCheckOutput
+                  COMMAND ${TOOLS_PREFIX}/rootls${exeext} copy_remote.root
+                  OUTREF RootcpReadRemote.ref
+                  FIXTURES_REQUIRED main-RootcpReadRemote-fixture
+                  FIXTURES_SETUP main-RootcpReadRemoteCheckOutput-fixture
+                  ENVIRONMENT ${test_env})
+
+ROOTTEST_ADD_TEST(RootcpReadRemoteClean
+                  COMMAND ${PY_TOOLS_PREFIX}/rootrm${pyext} -r copy_remote.root
+                  FIXTURES_REQUIRED main-RootcpReadRemoteCheckOutput-fixture)
+endif()
+
 #########################################################################
 
 ############################# ROOMV TESTS ############################
 ROOTTEST_ADD_TEST(SimpleRootmv1PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root move1.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root move1.root
                   FIXTURES_SETUP main-SimpleRootmv1PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmv1
@@ -394,7 +447,7 @@ ROOTTEST_ADD_TEST(SimpleRootmv1Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmv2PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root move2.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root move2.root
                   FIXTURES_SETUP main-SimpleRootmv2PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmv2
@@ -416,7 +469,7 @@ ROOTTEST_ADD_TEST(SimpleRootmv2Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmv3PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root move3.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root move3.root
                   FIXTURES_SETUP main-SimpleRootmv3PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmv3
@@ -437,7 +490,7 @@ ROOTTEST_ADD_TEST(SimpleRootmv3Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmv4PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root move4.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root move4.root
                   FIXTURES_SETUP main-SimpleRootmv4PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmv4
@@ -458,7 +511,7 @@ ROOTTEST_ADD_TEST(SimpleRootmv4Clean
 
 
 ROOTTEST_ADD_TEST(SimpleRootmv5PrepareInput
-                  COMMAND ${PY_TOOLS_PREFIX}/rootcp${pyext} --recreate -r test.root move5.root
+                  COMMAND ${TOOLS_PREFIX}/rootcp${exeext} --recreate -r test.root move5.root
                   FIXTURES_SETUP main-SimpleRootmv5PrepareInput-fixture)
 
 ROOTTEST_ADD_TEST(SimpleRootmv5

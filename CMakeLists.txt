@@ -34,8 +34,8 @@ if(CMAKE_HOST_APPLE AND (NOT CMAKE_OSX_SYSROOT OR CMAKE_OSX_SYSROOT STREQUAL "")
 
     set(CMAKE_OSX_SYSROOT "${SDK_PATH}" CACHE PATH "SDK path" FORCE)
   else()
-    message(WARNING "The CMAKE_OSX_SYSROOT variable is not set and the 'xcrun' executable is not available. "
-                    "This build of ROOT might not be able to find the correct MacOS SDK.")
+    message(FATAL_ERROR "The CMAKE_OSX_SYSROOT variable is not set and the 'xcrun' executable is not available. "
+                        "This build of ROOT cannot find the correct MacOS SDK.")
   endif()
 endif()
 
@@ -428,6 +428,13 @@ add_subdirectory (graf2d)
 add_subdirectory (graf3d)
 if(NOT minimal)
   add_subdirectory (gui)
+else()
+  if(asimage)
+    message(SEND_ERROR "minimal=ON is not compatible with asimage=ON. Consider setting instead gminimal=ON")
+  endif()
+  if(x11)
+    message(SEND_ERROR "minimal=ON is not compatible with x11=ON. Consider setting instead gminimal=ON")
+  endif()
 endif()
 add_subdirectory (montecarlo)
 if(geom)
@@ -556,8 +563,7 @@ if(runtime_cxxmodules)
     set(modules_idx_cmd COMMAND ${CMAKE_COMMAND} -E env PATH="${library_output_dir}\\\;%PATH%"
                                 ROOTIGNOREPREFIX=1 ROOT_HIST=0 $<TARGET_FILE:root.exe> -l -q -b)
   else()
-    set(modules_idx_cmd COMMAND ${ld_library_path}=${library_output_dir}:$ENV{${ld_library_path}}
-                                ROOT_INCLUDE_PATH=${DEFAULT_ROOT_INCLUDE_PATH}
+    set(modules_idx_cmd COMMAND ROOT_INCLUDE_PATH=${DEFAULT_ROOT_INCLUDE_PATH}
                                 ROOTIGNOREPREFIX=1 ROOT_HIST=0 $<TARGET_FILE:root.exe> -l -q -b)
   endif()
   add_custom_command(OUTPUT ${library_output_dir}/modules.idx
@@ -577,16 +583,17 @@ ROOT_ADD_TEST_SUBDIRECTORY(tutorials)
 #---hsimple.root---------(use the executable for clearer dependencies and proper return code)---
 add_custom_target(hsimple ALL DEPENDS tutorials/hsimple.root)
 add_dependencies(hsimple onepcm)
-if(WIN32)
-  set(hsimple_cmd COMMAND ${CMAKE_COMMAND} -E env PATH="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}\\\;%PATH%"
-                          ROOT_INCLUDE_PATH=${DEFAULT_ROOT_INCLUDE_PATH}
-                          ROOTIGNOREPREFIX=1 ROOT_HIST=0 $<TARGET_FILE:root.exe> -l -q -b -n -x ${CMAKE_SOURCE_DIR}/tutorials/hsimple.C -e return)
-else()
-  set(hsimple_cmd COMMAND ROOT_INCLUDE_PATH=${DEFAULT_ROOT_INCLUDE_PATH} ${ld_library_path}=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}:$ENV{${ld_library_path}}
-                          ROOTIGNOREPREFIX=1 ROOT_HIST=0 $<TARGET_FILE:root.exe> -l -q -b -n -x ${CMAKE_SOURCE_DIR}/tutorials/hsimple.C -e return)
-endif()
 add_custom_command(OUTPUT tutorials/hsimple.root
-                   ${hsimple_cmd}
+                   VERBATIM
+                   COMMAND
+                     ${CMAKE_COMMAND} -E env
+                     ROOT_INCLUDE_PATH=${DEFAULT_ROOT_INCLUDE_PATH}
+                     ROOTIGNOREPREFIX=1
+                     ROOT_HIST=0
+                     $<TARGET_FILE:root.exe> -l -q -b -n
+                       -e ".L ${CMAKE_SOURCE_DIR}/tutorials/hsimple.C"
+                       -e "hsimple();"
+                       -e return
                    WORKING_DIRECTORY tutorials
                    DEPENDS $<TARGET_FILE:root.exe> Cling Hist Tree Gpad Graf HistPainter move_artifacts)
 install(FILES ${CMAKE_BINARY_DIR}/tutorials/hsimple.root DESTINATION ${CMAKE_INSTALL_TUTDIR} COMPONENT tests)

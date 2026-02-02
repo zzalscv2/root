@@ -3402,7 +3402,7 @@ void TTree::CopyAddresses(TTree* tree, bool undo)
          continue;
       }
       if (undo) {
-         // Now we know whether the address has been transfered
+         // Now we know whether the address has been transferred
          tree->ResetBranchAddress(tbranch);
       } else {
          TBranchElement *mother = dynamic_cast<TBranchElement*>(leaf->GetBranch()->GetMother());
@@ -3846,7 +3846,7 @@ void TTree::Delete(Option_t* option /* = "" */)
       ResetBit(kMustCleanup);
    }
 
-   // Delete object from CINT symbol table so it can not be used anymore.
+   // Delete object from Cling symbol table so it can not be used anymore.
    gCling->DeleteGlobal(this);
 
    // Warning: We have intentional invalidated this object while inside a member function!
@@ -6111,7 +6111,7 @@ TTree* TTree::GetFriend(const char *friendname) const
 /// that you may not be able to take advantage of this feature.
 ///
 
-const char* TTree::GetFriendAlias(TTree* tree) const
+const char *TTree::GetFriendAlias(TTree *tree) const
 {
    if ((tree == this) || (tree == GetTree())) {
       return nullptr;
@@ -6122,30 +6122,60 @@ const char* TTree::GetFriendAlias(TTree* tree) const
    if (kGetFriendAlias & fFriendLockStatus) {
       return nullptr;
    }
-   if (!fFriends) {
+
+   // This is a TTree and it does not have any friends, we can return early
+   if (GetTree() == this && !fFriends)
       return nullptr;
-   }
-   TFriendLock lock(const_cast<TTree*>(this), kGetFriendAlias);
-   TIter nextf(fFriends);
-   TFriendElement* fe = nullptr;
-   while ((fe = (TFriendElement*) nextf())) {
-      TTree* t = fe->GetTree();
-      if (t == tree) {
-         return fe->GetName();
+
+   TFriendLock lock(const_cast<TTree *>(this), kGetFriendAlias);
+
+   auto lookForFriendNameInListOfFriends = [tree](const TList &friends) -> const char * {
+      for (auto *frEl : ROOT::Detail::TRangeStaticCast<TFriendElement>(friends)) {
+         auto *frElTree = frEl->GetTree();
+         // Simplest case: we found a friend which tree is the same as the input tree
+         if (frElTree == tree)
+            return frEl->GetName();
+         // Try again: the friend tree might be actually a TChain
+         if (frElTree && frElTree->GetTree() == tree)
+            return frEl->GetName();
       }
-      // Case of a chain:
-      if (t && t->GetTree() == tree) {
-         return fe->GetName();
+      return nullptr;
+   };
+
+   // First, look for the immediate friends of this tree
+   if (fFriends) {
+      const char *friendAlias = lookForFriendNameInListOfFriends(*fFriends);
+      if (friendAlias)
+         return friendAlias;
+   }
+
+   // Then, check if this is a TChain and the current tree has friends
+   // The non-redundant scenario here is that the currently-available
+   // inner TTree of this TChain has a list of friends which the TChain
+   // itself doesn't know anything about.
+   if (const auto *innerListOfFriends = GetTree()->GetListOfFriends();
+       innerListOfFriends && innerListOfFriends != fFriends) {
+      const char *friendAlias = lookForFriendNameInListOfFriends(*innerListOfFriends);
+      if (friendAlias)
+         return friendAlias;
+   }
+
+   // Recursively look into the list of friends of this tree
+   if (fFriends) {
+      for (auto *frEl : ROOT::Detail::TRangeStaticCast<TFriendElement>(*fFriends)) {
+         const char *friendAlias = frEl->GetTree()->GetFriendAlias(tree);
+         if (friendAlias)
+            return friendAlias;
       }
    }
-   // After looking at the first level,
-   // let's see if it is a friend of friends.
-   nextf.Reset();
-   fe = nullptr;
-   while ((fe = (TFriendElement*) nextf())) {
-      const char* res = fe->GetTree()->GetFriendAlias(tree);
-      if (res) {
-         return res;
+
+   // Recursively look into the list of friends of the inner tree
+   if (const auto *innerListOfFriends = GetTree()->GetListOfFriends();
+       innerListOfFriends && innerListOfFriends != fFriends) {
+      for (auto *frEl : ROOT::Detail::TRangeStaticCast<TFriendElement>(*innerListOfFriends)) {
+         const char *friendAlias = frEl->GetTree()->GetFriendAlias(tree);
+         if (friendAlias)
+            return friendAlias;
       }
    }
    return nullptr;
@@ -6612,6 +6642,14 @@ Long64_t TTree::LoadTree(Long64_t entry)
          if (fNotify) {
             if(!fNotify->Notify()) return -6;
          }
+         // We cannot know a priori if the branch(es) of the friend TChain(s) that were just
+         // updated were supposed to be connected to possibly a TChainElement of another chain
+         // that has befriended this TTree (i.e., one of the "external friends"). Thus, we
+         // forward the notification that one or more friend trees were updated to the friends
+         // of this TTree.
+         if (fExternalFriends)
+            for (auto external_fe : ROOT::Detail::TRangeStaticCast<TFriendElement>(*fExternalFriends))
+               external_fe->MarkUpdated();
       }
    }
 
@@ -9391,7 +9429,7 @@ void TTree::SetFileNumber(Int_t number)
 /// directly with numerical type variable rather than having to have the original
 /// set of classes (or a reproduction thereof).
 /// In other words, SetMakeClass sets the branch(es) into a
-/// mode that allow its reading via a set of independant variables
+/// mode that allow its reading via a set of independent variables
 /// (see the result of running TTree::MakeClass on your TTree) by changing the
 /// interpretation of the address passed to SetAddress from being the beginning
 /// of the object containing the data to being the exact location where the data
@@ -9785,6 +9823,7 @@ void TTree::Streamer(TBuffer& b)
       fDirectory = nullptr;
       fCacheDoAutoInit = true;
       fCacheUserSet = false;
+      fNamesToBranches.clear();
       Version_t R__v = b.ReadVersion(&R__s, &R__c);
       if (R__v > 4) {
          b.ReadClassBuffer(TTree::Class(), this, R__v, R__s, R__c);

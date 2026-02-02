@@ -28,12 +28,12 @@ template <class HolderClass> void write(const char *testname, int nEntry = 3) {
    dirname.ReplaceAll("/","-");
 
    gSystem->mkdir(dirname);
-   gSystem->Unlink("latest");
-   gSystem->Symlink(dirname,"latest");
+   // do not create symlink
+   //gSystem->Unlink("latest");
+   //gSystem->Symlink(dirname,"latest");
 
-   auto _filename = gSystem->ConcatFileName(dirname, testname );
-   TString filename = _filename;
-   delete [] _filename;
+   TString filename = testname;
+   gSystem->PrependPathName(dirname, filename);
    filename += ".root";
 
    TFile *file = new TFile(filename,"RECREATE","stl test file",0);
@@ -150,10 +150,9 @@ template <class HolderClass> bool read(const char *dirname, const char *testname
    bool testingTopLevelVectors = true;
 
 
-   auto _filename = gSystem->ConcatFileName(dirname, testname );
-   TString filename = _filename;
+   TString filename = testname;
+   gSystem->PrependPathName(dirname, filename);
    filename += ".root";
-   delete [] _filename;
 
    if (!current && gSystem->AccessPathName(filename, kFileExists)) {
       // when reading old directory a missing files is not an error.

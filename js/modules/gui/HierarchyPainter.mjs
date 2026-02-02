@@ -567,7 +567,7 @@ function objectHierarchy(top, obj, args = undefined) {
          item._vclass = cssValueNum;
       } else if (isStr(fld)) {
          simple = true;
-         item._value = '&quot;' + fld.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '&quot;';
+         item._value = '"' + fld + '"';
          item._vclass = 'h_value_str';
       } else if (typeof fld === 'undefined') {
          simple = true;
@@ -1429,7 +1429,7 @@ class HierarchyPainter extends BasePainter {
          if ('_vclass' in hitem)
             d3p.attr('class', hitem._vclass);
          if (!hitem._isopen)
-            d3p.html(hitem._value);
+            d3p.text(hitem._value);
       }
 
       if (has_childs && (isroot || hitem._isopen)) {
@@ -2515,12 +2515,12 @@ class HierarchyPainter extends BasePainter {
 
       if ((options.length === 1) && (options[0] === 'iotest')) {
          this.clearHierarchy();
-         d3_select('#' + this.disp_frameid).html('<h2>Start I/O test</h2>');
+         d3_select('#' + this.disp_frameid).html('').append('h2').text('Start I/O test');
 
          const tm0 = new Date();
-         return this.getObject(items[0]).then(() => {
+         return this.getObject(items[0]).then(res => {
             const tm1 = new Date();
-            d3_select('#' + this.disp_frameid).append('h2').html('Item ' + items[0] + ' reading time = ' + (tm1.getTime() - tm0.getTime()) + 'ms');
+            d3_select('#' + this.disp_frameid).append('h2').text(`Item ${items[0]} reading ` + (res?.obj ? `type ${res?.obj._typename} time = ${tm1.getTime() - tm0.getTime()}ms` : 'fail'));
             return true;
          });
       }
@@ -3035,7 +3035,8 @@ class HierarchyPainter extends BasePainter {
          h1._isopen = true;
          if (!this.h) {
             this.h = h1;
-            if (this.#topname) h1._name = this.#topname;
+            if (this.#topname)
+               h1._name = this.#topname;
          } else if (this.h._kind === kTopFolder)
             this.h._childs.push(h1);
          else {
@@ -3801,6 +3802,7 @@ class HierarchyPainter extends BasePainter {
          browser_kind = 'float';
 
       this.no_select = getOption('noselect');
+      this.top_info = getOption('info');
 
       if (getOption('files_monitoring') !== null)
          this.files_monitoring = true;
@@ -4091,7 +4093,7 @@ class HierarchyPainter extends BasePainter {
 
       this.brlayout.setBrowserContent(guiCode);
 
-      const title_elem = this.brlayout.setBrowserTitle(this.is_online ? 'ROOT online server' : 'Read a ROOT file');
+      const title_elem = this.brlayout.setBrowserTitle(this.top_info || (this.is_online ? 'ROOT online server' : 'Read a ROOT file'));
       title_elem?.on('contextmenu', evnt => {
          evnt.preventDefault();
          createMenu(evnt).then(menu => {
@@ -4141,7 +4143,7 @@ class HierarchyPainter extends BasePainter {
       const layout = main.select('.gui_layout');
       if (!layout.empty()) {
          ['simple', 'vert2', 'vert3', 'vert231', 'horiz2', 'horiz32', 'flex', 'tabs',
-          'grid 2x2', 'grid 1x3', 'grid 2x3', 'grid 3x3', 'grid 4x4'].forEach(kind => layout.append('option').attr('value', kind).html(kind));
+          'grid 2x2', 'grid 1x3', 'grid 2x3', 'grid 3x3', 'grid 4x4'].forEach(kind => layout.append('option').attr('value', kind).text(kind));
 
          layout.on('change', ev => {
             const kind = ev.target.value || 'flex';
@@ -4184,7 +4186,7 @@ class HierarchyPainter extends BasePainter {
          }
          if (!found) {
             const opt = document.createElement('option');
-            opt.innerHTML = opt.value = this.getLayout();
+            opt.innerText = opt.value = this.getLayout();
             selects.appendChild(opt);
             selects.selectedIndex = selects.options.length - 1;
          }
@@ -4342,4 +4344,4 @@ ObjectPainter.prototype.showInspector = function(opt, obj) {
 internals.drawInspector = drawInspector;
 
 export { HierarchyPainter, drawInspector, drawStreamerInfo, drawList, markAsStreamerInfo,
-         folderHierarchy, taskHierarchy, listHierarchy, objectHierarchy, keysHierarchy };
+         folderHierarchy, taskHierarchy, listHierarchy, objectHierarchy, keysHierarchy, parseAsArray };

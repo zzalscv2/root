@@ -7,10 +7,6 @@ from functools import partial
 import cppyy
 import cppyy.ll
 
-from ._application import PyROOTApplication
-from ._numbadeclare import _NumbaDeclareDecorator
-from ._pythonization import pythonization
-
 
 class PyROOTConfiguration(object):
     """Class for configuring PyROOT"""
@@ -57,6 +53,8 @@ class ROOTFacade(types.ModuleType):
     """Facade class for ROOT module"""
 
     def __init__(self, module, is_ipython):
+        from ._pythonization import pythonization
+
         types.ModuleType.__init__(self, module.__name__)
 
         self.module = module
@@ -144,14 +142,6 @@ class ROOTFacade(types.ModuleType):
     def _register_converters_and_executors(self):
 
         converter_aliases = {
-            "Long64_t": "long long",
-            "Long64_t ptr": "long long ptr",
-            "Long64_t&": "long long&",
-            "const Long64_t&": "const long long&",
-            "ULong64_t": "unsigned long long",
-            "ULong64_t ptr": "unsigned long long ptr",
-            "ULong64_t&": "unsigned long long&",
-            "const ULong64_t&": "const unsigned long long&",
             "Float16_t": "float",
             "const Float16_t&": "const float&",
             "Double32_t": "double",
@@ -160,12 +150,6 @@ class ROOTFacade(types.ModuleType):
         }
 
         executor_aliases = {
-            "Long64_t": "long long",
-            "Long64_t&": "long long&",
-            "Long64_t ptr": "long long ptr",
-            "ULong64_t": "unsigned long long",
-            "ULong64_t&": "unsigned long long&",
-            "ULong64_t ptr": "unsigned long long ptr",
             "Float16_t": "float",
             "Float16_t&": "float&",
             "Double32_t": "double",
@@ -181,6 +165,8 @@ class ROOTFacade(types.ModuleType):
             CPyCppyyRegisterExecutorAlias(name, target)
 
     def _finalSetup(self):
+        from ._application import PyROOTApplication
+
         # Prevent this method from being re-entered through the gROOT wrapper
         self.__dict__["gROOT"] = cppyy.gbl.ROOT.GetROOT()
 
@@ -443,6 +429,8 @@ class ROOTFacade(types.ModuleType):
     # Create and overload Numba namespace
     @property
     def Numba(self):
+        from ._numbadeclare import _NumbaDeclareDecorator
+
         cppyy.cppdef("namespace Numba {}")
         ns = self._fallback_getattr("Numba")
         ns.Declare = staticmethod(_NumbaDeclareDecorator)

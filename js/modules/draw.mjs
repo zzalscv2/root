@@ -101,7 +101,7 @@ const drawFuncs = { lst: [
    { name: clTEllipse, icon: 'img_graph', draw: () => import_more().then(h => h.drawEllipse), direct: true },
    { name: 'TArc', sameas: clTEllipse },
    { name: 'TCrown', sameas: clTEllipse },
-   { name: 'TPie', icon: 'img_graph', draw: () => import_more().then(h => h.drawPie), direct: true },
+   { name: 'TPie', icon: 'img_graph', class: () => import('./draw/TPiePainter.mjs').then(h => h.TPiePainter), opt: ';3D' },
    { name: 'TPieSlice', icon: 'img_graph', dummy: true },
    { name: 'TExec', icon: 'img_graph', dummy: true },
    { name: clTLine, icon: 'img_graph', class: () => import('./draw/TLinePainter.mjs').then(h => h.TLinePainter) },
@@ -761,7 +761,8 @@ assignPadPainterDraw(TPadPainter);
 import_geo = async function() {
    return import('./geom/TGeoPainter.mjs').then(geo => {
       const handle = getDrawHandle(getKindForType('TGeoVolumeAssembly'));
-      if (handle) handle.icon = 'img_geoassembly';
+      if (handle)
+         handle.icon = 'img_geoassembly';
       return geo;
    });
 };

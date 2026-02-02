@@ -186,6 +186,7 @@ std::unique_ptr<CodegenContext::LoopScope> CodegenContext::beginLoop(RooAbsArg c
    }
 
    // Make sure that the name of this variable doesn't clash with other stuff
+   addToCodeBody(in, "#pragma clad checkpoint loop\n");
    addToCodeBody(in, "for(int " + idx + " = 0; " + idx + " < " + std::to_string(numEntries) + "; " + idx + "++) {\n");
 
    return std::make_unique<LoopScope>(*this, std::move(vars));
@@ -340,12 +341,10 @@ CodegenContext::buildFunction(RooAbsArg const &arg, std::map<RooFit::Detail::Dat
    }
    ctx._xlArr = _xlArr;
    ctx._collectedFunctions = _collectedFunctions;
+   ctx._collectedCode = _collectedCode;
 
    static int iCodegen = 0;
    auto funcName = "roo_codegen_" + std::to_string(iCodegen++);
-
-   // Make sure the codegen implementations are known to the interpreter
-   gInterpreter->Declare("#include <RooFit/CodegenImpl.h>\n");
 
    ctx.pushScope();
    std::string funcBody = ctx.getResult(arg);
@@ -356,24 +355,13 @@ CodegenContext::buildFunction(RooAbsArg const &arg, std::map<RooFit::Detail::Dat
    std::stringstream bodyWithSigStrm;
    bodyWithSigStrm << "double " << funcName << "(double* params, double const* obs, double const* xlArr) {\n"
                    << "constexpr double inf = std::numeric_limits<double>::infinity();\n"
-                   << funcBody << "\n}";
+                   << funcBody << "\n}\n\n";
    ctx._collectedFunctions.emplace_back(funcName);
-   if (!gInterpreter->Declare(bodyWithSigStrm.str().c_str())) {
-      std::stringstream errorMsg;
-      std::string debugFileName = "_codegen_" + funcName + ".cxx";
-      errorMsg << "Function " << funcName << " could not be compiled. See above for details. Full code dumped to file "
-               << debugFileName << "for debugging";
-      {
-         std::ofstream outFile;
-         outFile.open(debugFileName.c_str());
-         outFile << bodyWithSigStrm.str();
-      }
-      oocoutE(nullptr, InputArguments) << errorMsg.str() << std::endl;
-      throw std::runtime_error(errorMsg.str().c_str());
-   }
+   ctx._collectedCode += bodyWithSigStrm.str();
 
    _xlArr = ctx._xlArr;
    _collectedFunctions = ctx._collectedFunctions;
+   _collectedCode = ctx._collectedCode;
 
    return funcName;
 }

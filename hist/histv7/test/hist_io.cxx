@@ -35,6 +35,21 @@ TEST(RVariableBinAxis, Streamer)
    ExpectThrowOnWriteObject(axis);
 }
 
+TEST(RCategoricalAxis, Streamer)
+{
+   std::vector<std::string> categories = {"a"};
+
+   const RCategoricalAxis axis(categories);
+   ExpectThrowOnWriteObject(axis);
+}
+
+TEST(RAxisVariant, Streamer)
+{
+   static constexpr std::size_t Bins = 20;
+   const RAxisVariant axis(RRegularAxis(Bins, {0, Bins}));
+   ExpectThrowOnWriteObject(axis);
+}
+
 TEST(RAxes, Streamer)
 {
    static constexpr std::size_t BinsX = 20;
@@ -46,8 +61,10 @@ TEST(RAxes, Streamer)
    }
    bins.push_back(BinsY);
    const RVariableBinAxis variableBinAxis(bins);
+   const std::vector<std::string> categories = {"a", "b", "c"};
+   const RCategoricalAxis categoricalAxis(categories);
 
-   const RAxes axes({regularAxis, variableBinAxis});
+   const RAxes axes({regularAxis, variableBinAxis, categoricalAxis});
    ExpectThrowOnWriteObject(axes);
 }
 

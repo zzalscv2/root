@@ -40,12 +40,18 @@ ROOT::RFieldZero &ROOT::Internal::GetFieldZeroOfModel(ROOT::RNTupleModel &model)
    return *model.fFieldZero;
 }
 
-ROOT::Internal::RProjectedFields &ROOT::Internal::GetProjectedFieldsOfModel(ROOT::RNTupleModel &model)
+const ROOT::Internal::RProjectedFields &ROOT::Internal::GetProjectedFieldsOfModel(const ROOT::RNTupleModel &model)
 {
    if (model.IsExpired()) {
       throw RException(R__FAIL("invalid use of expired model"));
    }
    return *model.fProjectedFields;
+}
+
+ROOT::Internal::RProjectedFields &ROOT::Internal::GetProjectedFieldsOfModel(ROOT::RNTupleModel &model)
+{
+   const auto &constModel = const_cast<const ROOT::RNTupleModel &>(model);
+   return const_cast<ROOT::Internal::RProjectedFields &>(GetProjectedFieldsOfModel(constModel));
 }
 
 //------------------------------------------------------------------------------
@@ -505,7 +511,7 @@ std::unique_ptr<ROOT::REntry> ROOT::RNTupleModel::CreateBareEntry() const
    return entry;
 }
 
-std::unique_ptr<ROOT::Experimental::Detail::RRawPtrWriteEntry> ROOT::RNTupleModel::CreateRawPtrWriteEntry() const
+std::unique_ptr<ROOT::Detail::RRawPtrWriteEntry> ROOT::RNTupleModel::CreateRawPtrWriteEntry() const
 {
    switch (fModelState) {
    case EState::kBuilding: throw RException(R__FAIL("invalid attempt to create entry of unfrozen model"));
@@ -513,8 +519,7 @@ std::unique_ptr<ROOT::Experimental::Detail::RRawPtrWriteEntry> ROOT::RNTupleMode
    case EState::kFrozen: break;
    }
 
-   auto entry = std::unique_ptr<Experimental::Detail::RRawPtrWriteEntry>(
-      new Experimental::Detail::RRawPtrWriteEntry(fModelId, fSchemaId));
+   auto entry = std::unique_ptr<Detail::RRawPtrWriteEntry>(new Detail::RRawPtrWriteEntry(fModelId, fSchemaId));
    for (const auto &f : fFieldZero->GetMutableSubfields()) {
       entry->AddField(*f);
    }

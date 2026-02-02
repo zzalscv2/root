@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <random>
 #include <string>
 #include <variant>
@@ -99,8 +100,25 @@ struct alignas(std::uint64_t) TestEBO : public EmptyStruct {
 template <typename T>
 class EdmWrapper {
 public:
+   struct Inner {
+      T fX;
+   };
+
    bool fIsPresent = true;
    T fMember;
+};
+
+template <typename U, typename V>
+struct EdmContent {
+   U fU;
+   V fV;
+};
+
+class EdmContainer {
+public:
+   using EdmWrapperLong64_t = EdmWrapper<long long>;
+   // Used to test that the streamer info for fWrapper will use long long
+   EdmWrapperLong64_t fWrapper;
 };
 
 template <typename T>
@@ -386,6 +404,14 @@ struct DuplicateBaseC : public BaseA {
 
 struct DuplicateBaseD : public DuplicateBaseB, public DuplicateBaseC {
    float d = 0.0;
+};
+
+struct PolymorphicBase {
+   virtual ~PolymorphicBase() {}
+};
+
+struct PolymorphicDerived : public PolymorphicBase {
+   ~PolymorphicDerived() override {}
 };
 
 class Left {

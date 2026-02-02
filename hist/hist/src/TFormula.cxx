@@ -49,6 +49,22 @@ std::string doubleToString(double val)
    return ss.str();
 }
 
+// In the interpreter, we must match the SIMD width used by compiled ROOT.
+// ROOT::Double_v aliases the best available native SIMD type, which may differ
+// between compiled and interpreted contexts (e.g. with -march=native).
+// Therefore, we explicitly select the fixed-size SIMD type corresponding to
+// the native SIMD width used in compiled ROOT.
+std::string vectorizedArgType()
+{
+#ifdef R__HAS_STD_EXPERIMENTAL_SIMD
+   auto n = ROOT::Double_v::size();
+   return "std::experimental::resize_simd_t<" + std::to_string(n) + ", ROOT::Double_v>";
+#else
+   // For other possible VecCore backends, we assume using the same type is fine.
+   return "ROOT::Double_v";
+#endif
+}
+
 } // namespace
 
 /** \class TFormula  TFormula.h "inc/TFormula.h"
@@ -120,17 +136,17 @@ std::string doubleToString(double val)
     above also applies to the predefined parametrized functions like `gaus` and
     `expo`.
 
-    Comparisons operators are also supported `(&amp;&amp;, ||, ==, &lt;=, &gt;=, !)`
+    Comparisons operators are also supported `(&&, ||, ==, <=, >=, !)`
 
     Examples:
 
-    `sin(x*(x&lt;0.5 || x&gt;1))`
+    `sin(x*(x<0.5 || x>1))`
 
     If the result of a comparison is TRUE, the result is 1, otherwise 0.
 
     Already predefined names can be given. For example, if the formula
 
-    `TFormula old("old",sin(x*(x&lt;0.5 || x&gt;1)))`
+    `TFormula old("old",sin(x*(x<0.5 || x>1)))`
 
     one can assign a name to the formula. By default the name of the object = title = formula itself.
 
@@ -138,7 +154,7 @@ std::string doubleToString(double val)
 
     is equivalent to:
 
-    `TFormula new("new","x*sin(x*(x&lt;0.5 || x&gt;1))")`
+    `TFormula new("new","x*sin(x*(x<0.5 || x>1))")`
 
     The class supports unlimited number of variables and parameters.
     By default the names which can be used for the variables are `x,y,z,t` or
@@ -501,7 +517,7 @@ TFormula::TFormula(const char *name, const char *formula, bool addToGlobList, bo
    fNumber = 0;
    fLambdaPtr = nullptr;
    fVectorized = vectorize;
-#ifndef R__HAS_VECCORE
+#ifndef R__HAS_STD_EXPERIMENTAL_SIMD
    fVectorized = false;
 #endif
 
@@ -815,7 +831,7 @@ prepareMethod(bool HasParameters, bool HasVariables, const char* FuncName,
    TString prototypeArguments = "";
    if (HasVariables || HasParameters) {
       if (IsVectorized)
-         prototypeArguments.Append("ROOT::Double_v const*");
+         prototypeArguments.Append(vectorizedArgType() + " const*");
       else
          prototypeArguments.Append("Double_t const*");
    }
@@ -882,7 +898,7 @@ bool TFormula::PrepareEvalMethod()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-///    Inputs formula, transfered to C++ code into Cling
+///    Inputs formula, transferred to C++ code into Cling
 
 void TFormula::InputFormulaIntoCling()
 {
@@ -931,17 +947,8 @@ void TFormula::FillDefaults()
    // const pair<TString,Double_t> defconsts[] = { {"pi",TMath::Pi()}, {"sqrt2",TMath::Sqrt2()},
    //       {"infinity",TMath::Infinity()}, {"ln10",TMath::Ln10()},
    //       {"loge",TMath::LogE()}, {"true",1},{"false",0} };
-   const pair<TString,TString> funShortcuts[] =
-      { {"sin","TMath::Sin" },
-        {"cos","TMath::Cos" }, {"exp","TMath::Exp"}, {"log","TMath::Log"}, {"log10","TMath::Log10"},
-        {"tan","TMath::Tan"}, {"sinh","TMath::SinH"}, {"cosh","TMath::CosH"},
-        {"tanh","TMath::TanH"}, {"asin","TMath::ASin"}, {"acos","TMath::ACos"},
-        {"atan","TMath::ATan"}, {"atan2","TMath::ATan2"}, {"sqrt","TMath::Sqrt"},
-        {"ceil","TMath::Ceil"}, {"floor","TMath::Floor"}, {"pow","TMath::Power"},
-        {"binomial","TMath::Binomial"},{"abs","TMath::Abs"},
-        {"min","TMath::Min"},{"max","TMath::Max"},{"sign","TMath::Sign" },
-        {"sq","TMath::Sq"}
-      };
+   const std::pair<TString, TString> funShortcuts[] = {
+      {"sign", "TMath::Sign"}, {"binomial", "TMath::Binomial"}, {"sq", "TMath::Sq"}};
 
    std::vector<TString> defvars2(10);
    for (int i = 0; i < 9; ++i)
@@ -964,42 +971,9 @@ void TFormula::FillDefaults()
    for (auto con : defconsts) {
       fConsts[con.first] = con.second;
    }
-   if (fVectorized) {
-      FillVecFunctionsShurtCuts();
-   } else {
-      for (auto fun : funShortcuts) {
-         fFunctionsShortcuts[fun.first] = fun.second;
-      }
-   }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-///    Fill the shortcuts for vectorized functions
-///    We will replace for example sin with vecCore::Mat::Sin
-///
-
-void TFormula::FillVecFunctionsShurtCuts() {
-#ifdef R__HAS_VECCORE
-   const pair<TString,TString> vecFunShortcuts[] =
-      { {"sin","vecCore::math::Sin" },
-        {"cos","vecCore::math::Cos" }, {"exp","vecCore::math::Exp"}, {"log","vecCore::math::Log"}, {"log10","vecCore::math::Log10"},
-        {"tan","vecCore::math::Tan"},
-        //{"sinh","vecCore::math::Sinh"}, {"cosh","vecCore::math::Cosh"},{"tanh","vecCore::math::Tanh"},
-        {"asin","vecCore::math::ASin"},
-        {"acos","TMath::Pi()/2-vecCore::math::ASin"},
-        {"atan","vecCore::math::ATan"},
-        {"atan2","vecCore::math::ATan2"}, {"sqrt","vecCore::math::Sqrt"},
-        {"ceil","vecCore::math::Ceil"}, {"floor","vecCore::math::Floor"}, {"pow","vecCore::math::Pow"},
-        {"cbrt","vecCore::math::Cbrt"},{"abs","vecCore::math::Abs"},
-        {"min","vecCore::math::Min"},{"max","vecCore::math::Max"},{"sign","vecCore::math::Sign" }
-        //{"sq","TMath::Sq"}, {"binomial","TMath::Binomial"}  // this last two functions will not work in vectorized mode
-      };
-   // replace in the data member maps fFunctionsShortcuts
-   for (auto fun : vecFunShortcuts) {
+   for (auto fun : funShortcuts) {
       fFunctionsShortcuts[fun.first] = fun.second;
    }
-#endif
-   // do nothing in case Veccore is not enabled
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1205,15 +1179,17 @@ void TFormula::HandleParametrizedFunctions(TString &formula)
 
    // replace old names xygaus -> gaus[x,y]
    formula.ReplaceAll("xyzgaus","gaus[x,y,z]");
+   formula.ReplaceAll("xygausn","gausn[x,y]");
    formula.ReplaceAll("xygaus","gaus[x,y]");
    formula.ReplaceAll("xgaus","gaus[x]");
    formula.ReplaceAll("ygaus","gaus[y]");
    formula.ReplaceAll("zgaus","gaus[z]");
+   formula.ReplaceAll("xyexpo","expo[x,y]");
    formula.ReplaceAll("xexpo","expo[x]");
    formula.ReplaceAll("yexpo","expo[y]");
    formula.ReplaceAll("zexpo","expo[z]");
+   formula.ReplaceAll("xylandaun","landaun[x,y]");
    formula.ReplaceAll("xylandau","landau[x,y]");
-   formula.ReplaceAll("xyexpo","expo[x,y]");
    // at the moment pre-defined functions have no more than 3 dimensions
    const char * defaultVariableNames[] = { "x","y","z"};
 
@@ -2211,7 +2187,7 @@ void TFormula::ProcessFormula(TString &formula)
 
          if (fun.fName.Contains("::")) // add support for nested namespaces
          {
-            // look for last occurence of "::"
+            // look for last occurrence of "::"
             std::string name(fun.fName.Data());
             size_t index = name.rfind("::");
             assert(index != std::string::npos);
@@ -2394,7 +2370,7 @@ void TFormula::ProcessFormula(TString &formula)
          if (fVectorized)
             inputFormulaVecFlag += " (vectorized)";
 
-         TString argType = fVectorized ? "ROOT::Double_v" : "Double_t";
+         TString argType = fVectorized ? vectorizedArgType() : "Double_t";
 
          // valid input formula - try to put into Cling (in case of no variables but only parameter we need to add the standard signature)
          TString argumentsPrototype = TString::Format("%s%s%s", ( (hasVariables || hasParameters) ? (argType + " const *x").Data() : ""),
@@ -2543,12 +2519,14 @@ void TFormula::FillParametrizedFunctions(map<pair<TString, Int_t>, pair<TString,
       make_pair(make_pair("gaus", 2), make_pair("[0]*exp(-0.5*(({V0}-[1])/[2])^2 - 0.5*(({V1}-[3])/[4])^2)", "")));
    functions.insert(
       make_pair(make_pair("landau", 2),
-                make_pair("[0]*TMath::Landau({V0},[1],[2],false)*TMath::Landau({V1},[3],[4],false)", "")));
-   functions.insert(make_pair(make_pair("expo", 2), make_pair("exp([0]+[1]*{V0})", "exp([0]+[1]*{V0}+[2]*{V1})")));
+                make_pair("[0]*TMath::Landau({V0},[1],[2],false)*TMath::Landau({V1},[3],[4],false)", "TMath::Landau({V0},[0],[1],true)*TMath::Landau({V1},[2],[3],true)")));
+   functions.insert(
+      make_pair(make_pair("expo", 2),
+                make_pair("exp([0]+[1]*{V0}+[2]*{V1})", "")));
    // 3-dimensional function
    functions.insert(
       make_pair(make_pair("gaus", 3), make_pair("[0]*exp(-0.5*(({V0}-[1])/[2])^2 - 0.5*(({V1}-[3])/[4])^2 - 0.5*(({V2}-[5])/[6])^2)", "")));
-   // gaussian with correlations
+   // 2-d gaussian with correlations
    functions.insert(
       make_pair(make_pair("bigaus", 2), make_pair("[0]*ROOT::Math::bigaussian_pdf({V0},{V1},[2],[4],[5],[1],[3])",
                                                   "[0]*ROOT::Math::bigaussian_pdf({V0},{V1},[2],[4],[5],[1],[3])")));
@@ -3134,7 +3112,7 @@ void TFormula::ReplaceParamName(TString & formula, const TString & oldName, cons
 ////////////////////////////////////////////////////////////////////////////////
 void TFormula::SetVectorized(Bool_t vectorized)
 {
-#ifdef R__HAS_VECCORE
+#ifdef R__HAS_STD_EXPERIMENTAL_SIMD
    if (fNdim == 0) {
       Info("SetVectorized","Cannot vectorized a function of zero dimension");
       return;
@@ -3153,13 +3131,12 @@ void TFormula::SetVectorized(Bool_t vectorized)
 
       fMethod.reset();
 
-      FillVecFunctionsShurtCuts();   // to replace with the right vectorized signature (e.g. sin  -> vecCore::math::Sin)
       PreProcessFormula(fFormula);
       PrepareFormula(fFormula);
    }
 #else
    if (vectorized)
-      Warning("SetVectorized", "Cannot set vectorized -- try building with option -Dbuiltin_veccore=On");
+      Warning("SetVectorized", "Cannot set vectorized -- try building with C++20 on Linux");
 #endif
 }
 
@@ -3169,11 +3146,11 @@ Double_t TFormula::EvalPar(const Double_t *x,const Double_t *params) const
    if (!fVectorized)
       return DoEval(x, params);
 
-#ifdef R__HAS_VECCORE
+#ifdef R__HAS_STD_EXPERIMENTAL_SIMD
 
    if (fNdim == 0 || !x) {
       ROOT::Double_v ret =  DoEvalVec(nullptr, params);
-      return vecCore::Get( ret, 0 );
+      return ret[0];
    }
 
     // otherwise, regular Double_t inputs on a vectorized function
@@ -3189,7 +3166,7 @@ Double_t TFormula::EvalPar(const Double_t *x,const Double_t *params) const
          xvec[i] = x[i];
 
       ROOT::Double_v ans = DoEvalVec(xvec.data(), params);
-      return vecCore::Get(ans, 0);
+      return ans[0];
    }
    // allocating a vector is much slower (we do only for dim > 4)
    std::vector<ROOT::Double_v> xvec(fNdim);
@@ -3197,12 +3174,12 @@ Double_t TFormula::EvalPar(const Double_t *x,const Double_t *params) const
       xvec[i] = x[i];
 
    ROOT::Double_v ans = DoEvalVec(xvec.data(), params);
-   return  vecCore::Get(ans, 0);
+   return ans[0];
 
 #else
    // this should never happen, because fVectorized can only be set true with
-   // R__HAS_VECCORE, but just in case:
-   Error("EvalPar", "Formula is vectorized (even though VECCORE is disabled!)");
+   // R__HAS_STD_EXPERIMENTAL_SIMD, but just in case:
+   Error("EvalPar", "Formula is vectorized (even though vectorizaton is not supported!)");
    return TMath::QuietNaN();
 #endif
 }
@@ -3412,7 +3389,7 @@ void TFormula::HessianPar(const Double_t *x, Double_t *result) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-#ifdef R__HAS_VECCORE
+#ifdef R__HAS_STD_EXPERIMENTAL_SIMD
 // ROOT::Double_v TFormula::Eval(ROOT::Double_v x, ROOT::Double_v y, ROOT::Double_v z, ROOT::Double_v t) const
 // {
 //    ROOT::Double_v xxx[] = {x, y, z, t};
@@ -3432,16 +3409,16 @@ ROOT::Double_v TFormula::EvalParVec(const ROOT::Double_v *x, const Double_t *par
    if (gDebug)
       Info("EvalPar", "Function is not vectorized - converting ROOT::Double_v into Double_t and back");
 
-   const int vecSize = vecCore::VectorSize<ROOT::Double_v>();
+   const int vecSize = ROOT::Double_v::size();
    std::vector<Double_t>  xscalars(vecSize*fNdim);
 
    for (int i = 0; i < vecSize; i++)
       for (int j = 0; j < fNdim; j++)
-         xscalars[i*fNdim+j] = vecCore::Get(x[j],i);
+         xscalars[i * fNdim + j] = x[j][i];
 
    ROOT::Double_v answers(0.);
    for (int i = 0; i < vecSize; i++)
-      vecCore::Set(answers, i, DoEval(&xscalars[i*fNdim], params));
+      answers[i] = DoEval(&xscalars[i * fNdim], params);
 
    return answers;
 }
@@ -3508,7 +3485,7 @@ Double_t TFormula::DoEval(const double * x, const double * params) const
 
 ////////////////////////////////////////////////////////////////////////////////
 // Copied from DoEval, but this is the vectorized version
-#ifdef R__HAS_VECCORE
+#ifdef R__HAS_STD_EXPERIMENTAL_SIMD
 ROOT::Double_v TFormula::DoEvalVec(const ROOT::Double_v *x, const double *params) const
 {
    if (!fReadyToExecute) {
@@ -3552,8 +3529,7 @@ ROOT::Double_v TFormula::DoEvalVec(const ROOT::Double_v *x, const double *params
    }
    return result;
 }
-#endif // R__HAS_VECCORE
-
+#endif // R__HAS_STD_EXPERIMENTAL_SIMD
 
 //////////////////////////////////////////////////////////////////////////////
 /// Re-initialize eval method
@@ -3615,8 +3591,8 @@ void TFormula::ReInitializeEvalMethod() {
 /// Return the expression formula.
 ///
 ///  - If option = "P" replace the parameter names with their values
-///  - If option = "CLING" return the actual expression used to build the function  passed to cling
-///  - If option = "CLINGP" replace in the CLING expression the parameter with their values
+///  - If option = "CLING" return the actual expression used to build the function passed to Cling
+///  - If option = "CLINGP" replace in the Cling expression the parameter with their values
 
 TString TFormula::GetExpFormula(Option_t *option) const
 {

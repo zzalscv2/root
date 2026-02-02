@@ -242,9 +242,9 @@ GeomPainter.Name:            @root_geompainter_type@
 # THttpServer specific settings
 # location of JavaScript ROOT sources
 #HttpServ.JSRootPath:        @jsrootdir@
-# Default setting for enabling or disabling JSROOT. 
+# Default setting for enabling or disabling JSROOT.
 # This can be toggled in the notebook using the `%jsroot on/off` command.
-Jupyter.JSRoot:               on
+Jupyter.JSRoot:               @root_jupyter_jsroot@
 
 # WebGui specific settings (defaults are shown)
 # fixed http port number for server, 0 - not fixed, -1 - disabled completely
@@ -352,7 +352,7 @@ Rint.History:            $(HOME)/.root_hist
 # Rint.WelcomeLite:      no
 # When the interactive ROOT starts, it can automatically load some frequently
 # used includes. However, this introduces several overheads
-#  - A long list of CINT and system files will be kept open during the session
+#  - A long list of Cling and system files will be kept open during the session
 #  - The initialisation takes more time (noticeable when using gdb or valgrind)
 #  - Memory overhead of about 5 Mbytes (1/3 of the base ROOT executable) when
 #    including <vector>
@@ -592,6 +592,9 @@ Davix.UseOldClient: @useoldwebfile@
 # X509_USER_CERT, X509_USER_KEY, X509_USER_PROXY,
 # S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_TOKEN
 # The gEnv vars have higher priority over the these envvars.
+
+# If set to yes, use the curl TFile and RRawFile backend even if davix is available
+Curl.ReplaceDavix: no
 
 # Example of custom setting for the Rint application (root.exe).
 # This overrides the default specified above for a generic application.

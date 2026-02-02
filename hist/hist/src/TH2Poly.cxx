@@ -146,7 +146,7 @@ times, it is better to divide into a small number of cells.
 
 TH2Poly::TH2Poly()
 {
-   Initialize(0., 0., 0., 0., 25, 25);
+   Initialize(0., 0., 0., 0., 25, 25); // automatic axis range calculation
    SetName("NoName");
    SetTitle("NoTitle");
    SetFloat();
@@ -1326,7 +1326,7 @@ void TH2Poly::SavePrimitive(std::ostream &out, Option_t *option)
    out << "   \n";
 
    // Construct the class initialization
-   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << hname << "\", \""
+   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << TString(GetName()).ReplaceSpecialCppChars() << "\", \""
        << TString(GetTitle()).ReplaceSpecialCppChars() << "\", " << fCellX << ", " << fXaxis.GetXmin() << ", "
        << fXaxis.GetXmax() << ", " << fCellY << ", " << fYaxis.GetXmin() << ", " << fYaxis.GetXmax() << ");\n";
 

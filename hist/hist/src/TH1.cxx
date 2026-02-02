@@ -361,7 +361,7 @@ When using the options 2 or 3 above, the labels are automatically
        h->SetCanExtend(TH1::kAllAxes);
 ~~~
  then, the Fill Function will automatically extend the axis range to
- accomodate the new value specified in the Fill argument. The method
+ accommodate the new value specified in the Fill argument. The method
  used is to double the bin size until the new value fits in the range,
  merging bins two by two. This automatic binning options is extensively
  used by the TTree::Draw function when histogramming Tree variables
@@ -2221,9 +2221,9 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
 
    //THE TEST
    Int_t m = 0, n = 0;
-
    //Experiment - experiment comparison
    if (comparisonUU) {
+      Int_t resIndex = 0;
       Double_t sum = sum1 + sum2;
       for (Int_t i = i_start; i <= i_end; ++i) {
          for (Int_t j = j_start; j <= j_end; ++j) {
@@ -2253,15 +2253,15 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
                   Double_t nexp1 = cntsum * sum1 / sum;
                   //Double_t nexp2 = binsum*sum2/sum;
 
-                  if (res) res[i - i_start] = (cnt1 - nexp1) / TMath::Sqrt(nexp1);
+                  if (res) res[resIndex] = (cnt1 - nexp1) / TMath::Sqrt(nexp1);
 
                   if (cnt1 < 1) ++m;
                   if (cnt2 < 1) ++n;
 
                   //Habermann correction for residuals
                   Double_t correc = (1. - sum1 / sum) * (1. - cntsum / sum);
-                  if (res) res[i - i_start] /= TMath::Sqrt(correc);
-
+                  if (res) res[resIndex] /= TMath::Sqrt(correc);
+                  if (res) resIndex++;
                   Double_t delta = sum2 * cnt1 - sum1 * cnt2;
                   chi2 += delta * delta / cntsum;
                }
@@ -2289,6 +2289,7 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
    // case of error = 0 and content not zero is treated without problems by excluding second chi2 sum
    // and can be considered as a data-theory comparison
    if ( comparisonUW ) {
+      Int_t resIndex = 0;
       for (Int_t i = i_start; i <= i_end; ++i) {
          for (Int_t j = j_start; j <= j_end; ++j) {
             for (Int_t k = k_start; k <= k_end; ++k) {
@@ -2371,10 +2372,11 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
                      Double_t temp2 = 1.0 + (sum1 * e2sq - sum2 * cnt2) / var2;
                      temp2 = temp1 * temp1 * sum1 * probb * (1.0 - probb) + temp2 * temp2 * e2sq / 4.0;
                      // invert sign here
-                     res[i - i_start] = - delta2 / TMath::Sqrt(temp2);
+                     res[resIndex] = - delta2 / TMath::Sqrt(temp2);
                   }
                   else
-                     res[i - i_start] = delta1 / TMath::Sqrt(nexp1);
+                     res[resIndex] = delta1 / TMath::Sqrt(nexp1);
+                  resIndex++;
                }
             }
          }
@@ -2396,6 +2398,7 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
 
    // weighted - weighted  comparison
    if (comparisonWW) {
+      Int_t resIndex = 0;
       for (Int_t i = i_start; i <= i_end; ++i) {
          for (Int_t j = j_start; j <= j_end; ++j) {
             for (Int_t k = k_start; k <= k_end; ++k) {
@@ -2437,7 +2440,8 @@ Double_t TH1::Chi2TestX(const TH1* h2,  Double_t &chi2, Int_t &ndf, Int_t &igood
                      Double_t s2 = e2sq * ( 1. - e1sq * sum2 * sum2 / sigma );
                      z = -d2 / TMath::Sqrt(s2);
                   }
-                  res[i - i_start] = z;
+                  res[resIndex] = z;
+                  resIndex++;
                }
 
                if (e1sq > 0 && cnt1 * cnt1 / e1sq < 10) m++;
@@ -3864,7 +3868,7 @@ TObject *TH1::FindObject(const TObject *obj) const
 ///
 ///
 /// fname is the name of a function available in the global ROOT list of functions
-/// `gROOT->GetListOfFunctions`
+/// `gROOT->GetListOfFunctions`. Note that this is not thread safe.
 /// The list include any TF1 object created by the user plus some pre-defined functions
 /// which are automatically created by ROOT the first time a pre-defined function is requested from `gROOT`
 /// (i.e. when calling `gROOT->GetFunction(const char *name)`).
@@ -3877,6 +3881,7 @@ TObject *TH1::FindObject(const TObject *obj) const
 /// For printing the list of all available functions do:
 ///
 ///       TF1::InitStandardFunctions();   // not needed if `gROOT->GetFunction` is called before
+///       TF2::InitStandardFunctions(); TF3::InitStandardFunctions(); // For 2D or 3D
 ///       gROOT->GetListOfFunctions()->ls()
 ///
 /// `fname` can also be a formula that is accepted by the linear fitter containing the special operator `++`,
@@ -6310,7 +6315,7 @@ void TH1::Paint(Option_t *option)
 /// NOTE:  The bin edges specified in xbins should correspond to bin edges
 /// in the original histogram. If a bin edge in the new histogram is
 /// in the middle of a bin in the original histogram, all entries in
-/// the split bin in the original histogram will be transfered to the
+/// the split bin in the original histogram will be transferred to the
 /// lower of the two possible bins in the new histogram. This is
 /// probably not what you want. A warning message is emitted in this
 /// case
@@ -6758,9 +6763,12 @@ void TH1::SetDefaultSumw2(Bool_t sumw2)
 ////////////////////////////////////////////////////////////////////////////////
 /// Change/set the title.
 ///
-/// If title is in the form `stringt;stringx;stringy;stringz`
+/// If title is in the form `stringt;stringx;stringy;stringz;stringc`
 /// the histogram title is set to `stringt`, the x axis title to `stringx`,
-/// the y axis title to `stringy`, and the z axis title to `stringz`.
+/// the y axis title to `stringy`, the z axis title to `stringz`, and the c
+/// axis title for the palette is ignored at this stage.
+/// Note that you can use e.g. `stringt;stringx` if you only want to specify
+/// title and x axis title.
 ///
 /// To insert the character `;` in one of the titles, one should use `#;`
 /// or `#semicolon`.
@@ -6792,8 +6800,15 @@ void TH1::SetTitle(const char *title)
             fYaxis.SetTitle(str2.Data());
             lns  = str1.Length();
             str1 = str1(isc+1, lns);
-            str1.ReplaceAll("#semicolon",10,";",1);
-            fZaxis.SetTitle(str1.Data());
+            isc  = str1.Index(";");
+            if (isc >=0 ) {
+               str2 = str1(0,isc);
+               str2.ReplaceAll("#semicolon",10,";",1);
+               fZaxis.SetTitle(str2.Data());
+            } else {
+               str1.ReplaceAll("#semicolon",10,";",1);
+               fZaxis.SetTitle(str1.Data());
+            }
          } else {
             str1.ReplaceAll("#semicolon",10,";",1);
             fYaxis.SetTitle(str1.Data());
@@ -7344,7 +7359,7 @@ void TH1::SavePrimitive(std::ostream &out, Option_t *option /*= ""*/)
    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
    out << std::setprecision(max_precision);
 
-   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << hname << "\", \""
+   out << "   " << ClassName() << " *" << hname << " = new " << ClassName() << "(\"" << TString(savedName).ReplaceSpecialCppChars() << "\", \""
        << TString(GetTitle()).ReplaceSpecialCppChars() << "\", " << GetXaxis()->GetNbins();
    if (!sxaxis.IsNull())
       out << ", " << sxaxis << ".data()";
@@ -7456,7 +7471,7 @@ void TH1::SavePrimitiveHelp(std::ostream &out, const char *hname, Option_t *opti
    SavePrimitiveFunctions(out, hname, fFunctions);
 
    // save attributes
-   SaveFillAttributes(out, hname, 0, 1001);
+   SaveFillAttributes(out, hname, -1, -1);
    SaveLineAttributes(out, hname, 1, 1, 1);
    SaveMarkerAttributes(out, hname, 1, 1, 1);
    fXaxis.SaveAttributes(out, hname, "->GetXaxis()");
@@ -8521,7 +8536,11 @@ void TH1::SetBuffer(Int_t bufsize, Option_t * /*option*/)
 /// By default the number of contour levels is set to 20. The contours values
 /// in the array "levels" should be specified in increasing order.
 ///
-/// if argument levels = 0 or missing, equidistant contours are computed
+/// if argument levels = 0 or missing, `nlevels` equidistant contours are computed
+/// between `zmin` and `zmax - dz`, both included, with step
+/// `dz = (zmax - zmin)/nlevels`. Note that contour lines are not centered, but
+/// contour surfaces (when drawing with `COLZ`) will be, since contour color `i` covers
+/// the region of values between contour line `i` and `i+1`.
 
 void TH1::SetContour(Int_t  nlevels, const Double_t *levels)
 {

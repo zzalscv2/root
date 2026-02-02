@@ -1,6 +1,19 @@
-void readNoLib(const char *filename = 0) {
-   TFile *_file0 = TFile::Open(filename ? filename : "4-01-03/vector.root");
-   
+int readNoLib(const char *fname = "vector.root")
+{
+   TString dirname = gROOT->GetVersion();
+   dirname.ReplaceAll(".","-");
+   dirname.ReplaceAll("/","-");
+
+   TString filename = fname;
+   gSystem->PrependPathName(dirname, filename);
+
+   auto file0 = TFile::Open(filename);
+   if (!file0)
+      return 1;
+
+   auto stltree = (TTree *) file0->Get("stltree");
+   if (!stltree)
+      return 1;
 
    stltree->Scan("split99.fScalar","","colsize=30");
    stltree->Scan("split3.fScalar","","colsize=30");  // intentionally on missing branche
@@ -46,4 +59,5 @@ void readNoLib(const char *filename = 0) {
    stltree->Scan("split_1.fTemplates.val.val.val","","colsize=30");
    stltree->Scan("split_2.fTemplates.val.val.val","","colsize=30");
 
+   return 0;
 }

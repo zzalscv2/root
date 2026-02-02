@@ -173,6 +173,13 @@ PyObject* TemplateProxy::Instantiate(const std::string& fname,
 
         Py_DECREF(pyargs);
         Py_DECREF(tpArgs);
+
+    // Propagate the error that occurs if we can't construct the C++ name
+    // from the provided template argument
+        if (PyErr_Occurred()) {
+            return nullptr;
+        }
+
         if (name_v1.size())
             proto = name_v1.substr(1, name_v1.size()-2);
     }
@@ -289,6 +296,7 @@ PyObject* TemplateProxy::Instantiate(const std::string& fname,
         }
 
     // cleanup
+        Py_XDECREF(exact);
         Py_DECREF(pyresname);
         Py_DECREF(pycachename);
 
@@ -655,8 +663,8 @@ static PyObject* tpp_call(TemplateProxy* pytmpl, PyObject* args, PyObject* kwds)
         int pcnt = 0;
         pymeth = pytmpl->Instantiate(pytmpl->fTI->fCppName, args, nargsf, pref, &pcnt);
         if (pymeth) {
-        // attempt actual call; argument based, so do not allow implicit conversions
-            result = CallMethodImp(pytmpl, pymeth, args, nargsf, kwds, false, sighash);
+        // attempt actual call; even if argument based, allow implicit conversions, for example for non-template arguments
+            result = CallMethodImp(pytmpl, pymeth, args, nargsf, kwds, true, sighash);
             if (result) TPPCALL_RETURN;
         }
         Utility::FetchError(errors);
@@ -720,6 +728,11 @@ static PyObject* tpp_subscript(TemplateProxy* pytmpl, PyObject* args)
     Py_XDECREF(typeBoundMethod->fTemplateArgs);
     typeBoundMethod->fTemplateArgs = CPyCppyy_PyText_FromString(
         Utility::ConstructTemplateArgs(nullptr, args).c_str());
+// Propagate the error that occurs if we can't construct the C++ name
+// from the provided template argument
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
     return (PyObject*)typeBoundMethod;
 }
 
@@ -815,6 +828,11 @@ static PyObject* tpp_overload(TemplateProxy* pytmpl, PyObject* args)
         if (ol) return ol;
 
         proto = Utility::ConstructTemplateArgs(nullptr, args);
+    // Propagate the error that occurs if we can't construct the C++ name
+    // from the provided template argument
+        if (PyErr_Occurred()) {
+            return nullptr;
+        }
 
         scope = ((CPPClass*)pytmpl->fTI->fPyClass)->fCppType;
         cppmeth = Cppyy::GetMethodTemplate(

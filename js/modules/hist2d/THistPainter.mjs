@@ -1,10 +1,10 @@
 import { gStyle, BIT, settings, constants, create, isObject, isFunc, isStr, getPromise,
-         clTList, clTPaveText, clTPaveStats, clTPaletteAxis, clTProfile, clTProfile2D, clTProfile3D, clTPad,
+         clTList, clTPaveStats, clTPaletteAxis, clTProfile, clTProfile2D, clTProfile3D, clTPad,
          clTAxis, clTF1, clTF2, kNoZoom, clTCutG, kNoStats, kTitle, setHistogramTitle } from '../core.mjs';
 import { getColorPalette } from '../base/colors.mjs';
 import { DrawOptions } from '../base/BasePainter.mjs';
 import { ObjectPainter, EAxisBits, kAxisTime, kAxisLabels } from '../base/ObjectPainter.mjs';
-import { TPavePainter, kPosTitle } from '../hist/TPavePainter.mjs';
+import { TPavePainter, drawObjectTitle } from '../hist/TPavePainter.mjs';
 import { ensureTCanvas } from '../gpad/TCanvasPainter.mjs';
 import { gamma_quantile, gamma_quantile_c } from '../base/math.mjs';
 
@@ -151,13 +151,13 @@ class THistDrawOptions {
 
       // let configure histogram titles - only for debug purposes
       if (d.check('HTITLE:', true))
-         histo.fTitle = decodeURIComponent(d.part.toLowerCase());
+         histo.fTitle = decodeURIComponent(d.getPart(true));
       if (d.check('XTITLE:', true))
-         histo.fXaxis.fTitle = decodeURIComponent(d.part.toLowerCase());
+         histo.fXaxis.fTitle = decodeURIComponent(d.getPart(true));
       if (d.check('YTITLE:', true))
-         histo.fYaxis.fTitle = decodeURIComponent(d.part.toLowerCase());
+         histo.fYaxis.fTitle = decodeURIComponent(d.getPart(true));
       if (d.check('ZTITLE:', true))
-         histo.fZaxis.fTitle = decodeURIComponent(d.part.toLowerCase());
+         histo.fZaxis.fTitle = decodeURIComponent(d.getPart(true));
       if (d.check('POISSON2'))
          this.Poisson = kPoisson2;
       if (d.check('POISSON'))
@@ -269,6 +269,14 @@ class THistDrawOptions {
          pad.fGridx = 1;
       if (d.check('GRIDY') && pad)
          pad.fGridy = 1;
+      if (d.check('TICKXY2') && pad)
+         pad.fTickx = pad.fTicky = 2;
+      if (d.check('TICKX2') && pad)
+         pad.fTickx = 2;
+      if (d.check('TICKY2') && pad)
+         pad.fTicky = 2;
+      if (d.check('TICKZ2') && pad)
+         pad.fTickz = 2;
       if (d.check('TICKXY') && pad)
          pad.fTickx = pad.fTicky = 1;
       if (d.check('TICKX') && pad)
@@ -847,11 +855,17 @@ class THistDrawOptions {
             res += '_GRIDX';
          if (pad.fGridy)
             res += '_GRIDY';
-         if (pad.fTickx)
+         if (pad.fTickx === 2)
+            res += '_TICKX2';
+         else if (pad.fTickx)
             res += '_TICKX';
-         if (pad.fTicky)
+         if (pad.fTicky === 2)
+            res += '_TICKY2';
+         else if (pad.fTicky)
             res += '_TICKY';
-         if (pad.fTickz)
+         if (pad.fTickz === 2)
+            res += '_TICKZ2';
+         else if (pad.fTickz)
             res += '_TICKZ';
       }
 
@@ -1154,9 +1168,6 @@ class THistPainter extends ObjectPainter {
    /** @summary Returns true if histogram drawn instead of TF1/TF2 object */
    isTF1() { return false; }
 
-   /** @summary Returns true if TH1K */
-   isTH1K() { return this.matchObjectType('TH1K'); }
-
    /** @summary Returns true if TH2Poly */
    isTH2Poly() {
       return this.matchObjectType(/^TH2Poly/) || this.matchObjectType(/^TProfile2Poly/);
@@ -1425,10 +1436,7 @@ class THistPainter extends ObjectPainter {
 
          if (this.isTProfile())
             histo.fBinEntries = obj.fBinEntries;
-         else if (this.isTH1K()) {
-            histo.fNIn = obj.fNIn;
-            histo.fReady = 0;
-         } else if (this.isTH2Poly())
+         else if (this.isTH2Poly())
             histo.fBins = obj.fBins;
 
          // remove old functions, update existing, prepare to draw new one
@@ -1657,64 +1665,15 @@ class THistPainter extends ObjectPainter {
 
    /** @summary Only redraw histogram title
      * @return {Promise} with painter */
-   async updateHistTitle() {
-      const o = this.getOptions();
-
-      // case when histogram drawn over other histogram (same option)
-      if (!this.isMainPainter() || o.Same || (o.Axis > 0))
-         return this;
-
-      const tpainter = this.getPadPainter()?.findPainterFor(null, kTitle, clTPaveText),
-            pt = tpainter?.getObject();
-
-      if (!tpainter || !pt)
-         return this;
-
-      const histo = this.getHisto(),
-            draw_title = !histo.TestBit(kNoTitle) && (gStyle.fOptTitle > 0);
-
-      pt.Clear();
-      if (draw_title)
-         pt.AddText(histo.fTitle);
-      return tpainter.redraw().then(() => this);
+   async updateHistTitle(first_time) {
+      const o = this.getOptions(),
+            histo = this.getHisto();
+      return drawObjectTitle(this, first_time, this.isMainPainter() && !o.Same && (o.Axis <= 0), !histo.TestBit(kNoTitle));
    }
 
    /** @summary Draw histogram title
      * @return {Promise} with painter */
-   async drawHistTitle() {
-      const o = this.getOptions();
-
-      // case when histogram drawn over other histogram (same option)
-      if (!this.isMainPainter() || o.Same || (o.Axis > 0))
-         return this;
-
-      const histo = this.getHisto(), st = gStyle,
-            draw_title = !histo.TestBit(kNoTitle) && (st.fOptTitle > 0),
-            pp = this.getPadPainter();
-
-      let pt = pp.findInPrimitives(kTitle, clTPaveText);
-
-      if (pt) {
-         pt.Clear();
-         if (draw_title)
-            pt.AddText(histo.fTitle);
-         return this;
-      }
-
-      pt = create(clTPaveText);
-      Object.assign(pt, {
-         fName: kTitle, fOption: 'blNDC', fFillColor: st.fTitleColor, fFillStyle: st.fTitleStyle, fBorderSize: st.fTitleBorderSize,
-         fTextFont: st.fTitleFont, fTextSize: st.fTitleFontSize, fTextColor: st.fTitleTextColor, fTextAlign: 22
-      });
-
-      if (draw_title)
-         pt.AddText(histo.fTitle);
-
-      return TPavePainter.draw(pp, pt, kPosTitle).then(p => {
-         p?.setSecondaryId(this, kTitle);
-         return this;
-      });
-   }
+   async drawHistTitle() { return this.updateHistTitle(true); }
 
    /** @summary Live change and update of title drawing
      * @desc Used from the GED */

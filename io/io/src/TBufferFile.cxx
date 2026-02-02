@@ -1696,7 +1696,7 @@ void TBufferFile::ReadFastArray(void **start, const TClass *cl, Int_t n,
              // is indeed pointing to the same object as the object the user set up
              // in the default constructor).
              ) {
-            ((TClass*)cl)->Destructor(old,kFALSE); // call delete and desctructor
+            ((TClass*)cl)->Destructor(old,kFALSE); // call delete and destructor
          }
       }
 
@@ -2660,7 +2660,7 @@ void TBufferFile::WriteObjectClass(const void *actualObjectStart, const TClass *
 
    if (!actualObjectStart) {
 
-      // save kNullTag to represent NULL pointer
+      // save kNullTag to represent nullptr pointer
       *this << (UInt_t) kNullTag;
 
    } else {
@@ -3433,7 +3433,7 @@ Int_t TBufferFile::ReadClassEmulated(const TClass *cl, void *object, const TClas
 /// Deserialize information from a buffer into an object.
 ///
 /// Note: This function is called by the xxx::Streamer() functions in
-/// rootcint-generated dictionaries.
+/// rootcling-generated dictionaries.
 /// This function assumes that the class version and the byte count
 /// information have been read.
 ///
@@ -3535,7 +3535,7 @@ Int_t TBufferFile::ReadClassBuffer(const TClass *cl, void *pointer, Int_t versio
 /// Deserialize information from a buffer into an object.
 ///
 /// Note: This function is called by the xxx::Streamer()
-/// functions in rootcint-generated dictionaries.
+/// functions in rootcling-generated dictionaries.
 ///
 
 Int_t TBufferFile::ReadClassBuffer(const TClass *cl, void *pointer, const TClass *onFileClass)

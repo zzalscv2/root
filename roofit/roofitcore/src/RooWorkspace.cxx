@@ -178,7 +178,7 @@ RooWorkspace::RooWorkspace(const char* name, const char* title) :
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Construct empty workspace with given name and option to export reference to
-/// all workspace contents to a CINT namespace with the same name.
+/// all workspace contents to a Cling namespace with the same name.
 
 RooWorkspace::RooWorkspace(const char* name, bool /*doCINTExport*/)  :
   TNamed(name,name), _classes(this)
@@ -623,22 +623,6 @@ bool RooWorkspace::import(const RooAbsArg& inArg,
   RooArgSet(*cloneTop).snapshot(cloneSet2, !noRecursion);
   RooAbsArg* cloneTop2 = cloneSet2.find(topName2.c_str()) ;
 
-  // Make final check list of conflicting nodes
-  RooArgSet conflictNodes2 ;
-  RooArgSet branchSet2 ;
-  for (const auto branch2 : branchSet2) {
-    if (_allOwnedNodes.find(branch2->GetName())) {
-      conflictNodes2.add(*branch2) ;
-    }
-  }
-
-  // Terminate here if there are conflicts and no resolution protocol
-  if (!conflictNodes2.empty()) {
-    coutE(ObjectHandling) << "RooWorkSpace::import(" << GetName() << ") ERROR object named " << inArg.GetName() << ": component(s) "
-        << conflictNodes2 << " cause naming conflict after conflict resolution protocol was executed" << std::endl ;
-    return true ;
-  }
-
   // Perform any auxiliary imports at this point
   for (const auto node : cloneSet2) {
     if (node->importWorkspaceHook(*this)) {
@@ -1075,7 +1059,7 @@ bool RooWorkspace::commitTransaction()
     return false ;
   }
 
-  // Publish sandbox nodes in directory and/or CINT if requested
+  // Publish sandbox nodes in directory and/or Cling if requested
   for(RooAbsArg* sarg : _sandboxNodes) {
     if (_dir && sarg->IsA() != RooConstVar::Class()) {
       _dir->InternalAppend(sarg) ;
@@ -1492,10 +1476,9 @@ std::string findFileInPath(std::string const &file, std::list<std::string> const
 {
    // Check list of additional paths
    for (std::string const &diter : dirList) {
-
-      char *cpath = gSystem->ConcatFileName(diter.c_str(), file.c_str());
+      TString temp = file.c_str();
+      const char *cpath = gSystem->PrependPathName(diter.c_str(), temp);
       std::string path = cpath;
-      delete[] cpath;
       if (!gSystem->AccessPathName(path.c_str())) {
          // found file
          return path;

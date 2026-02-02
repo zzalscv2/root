@@ -1,7 +1,12 @@
 #include "hist_test.hxx"
 
+#include <cstdint>
 #include <iterator>
 #include <vector>
+
+#ifndef TYPED_TEST_SUITE
+#define TYPED_TEST_SUITE TYPED_TEST_CASE
+#endif
 
 TEST(RBinIndex, Constructor)
 {
@@ -56,7 +61,7 @@ TEST(RBinIndex, Plus)
    }
 
    // Matches RBinIndex::UnderflowIndex
-   static constexpr std::size_t UnderflowIndex = -3;
+   static constexpr auto UnderflowIndex = static_cast<std::uint64_t>(-3);
    EXPECT_TRUE((RBinIndex(0) + UnderflowIndex).IsInvalid());
    EXPECT_TRUE((RBinIndex(3) + UnderflowIndex).IsInvalid());
 }
@@ -151,6 +156,20 @@ TEST(RBinIndex, Relation)
    EXPECT_FALSE(underflow >= overflow);
 }
 
+template <typename T>
+class RBinIndexConversion : public testing::Test {};
+
+using IntegerTypes = testing::Types<signed char, unsigned char, short, unsigned short, int, unsigned int, long,
+                                    unsigned long, long long, unsigned long long>;
+TYPED_TEST_SUITE(RBinIndexConversion, IntegerTypes);
+
+TYPED_TEST(RBinIndexConversion, Constructor)
+{
+   const TypeParam input = 1;
+   const RBinIndex index(input);
+   EXPECT_EQ(index.GetIndex(), 1);
+}
+
 using ROOT::Experimental::Internal::CreateBinIndexRange;
 
 TEST(RBinIndexRange, ConstructorCreate)
@@ -167,6 +186,27 @@ TEST(RBinIndexRange, ConstructorCreate)
    const auto range01 = CreateBinIndexRange(index0, RBinIndex(1), 1);
    EXPECT_EQ(range01.GetBegin(), index0);
    EXPECT_EQ(range01.GetEnd(), RBinIndex(1));
+}
+
+TEST(RBinIndexRange, Equality)
+{
+   const auto index0 = RBinIndex(0);
+   const auto index1 = RBinIndex(1);
+   const auto empty = CreateBinIndexRange(index0, index0, 0);
+   const auto empty0 = CreateBinIndexRange(index0, index0, 0);
+   const auto empty1 = CreateBinIndexRange(index1, index1, 0);
+   EXPECT_EQ(empty, empty0);
+   EXPECT_NE(empty0, empty1);
+
+   const auto range01 = CreateBinIndexRange(index0, index1, 0);
+   EXPECT_NE(empty, range01);
+
+   const auto underflow = RBinIndex::Underflow();
+   const RBinIndex invalid;
+   const auto full1 = CreateBinIndexRange(underflow, invalid, /*nNormalBins=*/1);
+   const auto full2 = CreateBinIndexRange(underflow, invalid, /*nNormalBins=*/2);
+   EXPECT_NE(range01, full1);
+   EXPECT_NE(full1, full2);
 }
 
 TEST(RBinIndexRange, Empty)

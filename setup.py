@@ -33,9 +33,44 @@ INSTALL_DIR = tempfile.mkdtemp()
 ROOT_BUILD_INTERNAL_DIRNAME = "mock_site_packages"
 
 
+def _patch_root_init():
+    warning_patch = '''
+import warnings
+import textwrap
+
+warnings.warn(
+textwrap.dedent("""
+This distribution of ROOT is in alpha stage. Feedback is welcome and appreciated. Feel free to reach out to the user forum for questions and general feedback at https://root-forum.cern.ch or to submit an issue at https://github.com/root-project/root/issues. Do not rely on this distribution for production purposes.
+""")
+)
+'''
+    root_init_path = pathlib.Path(SOURCE_DIR) / "bindings/pyroot/pythonizations/python/ROOT/__init__.py"
+    with open(root_init_path) as init_file:
+        full_init_text = init_file.read()
+
+    new_init_text = warning_patch + full_init_text
+    with open(root_init_path, "w") as init_file:
+        init_file.write(new_init_text)
+
+
 class ROOTBuild(_build):
+    def finalize_options(self):
+        # Normalize the distribution name before building
+        if self.distribution.metadata.name == "ROOT":
+            # Store original name for metadata
+            self.distribution.metadata._original_name = "ROOT"
+            # Use normalized name to comply with PEP625 and avoid errors
+            # caused by https://github.com/pypi/warehouse/pull/18924
+            self.distribution.metadata.name = "root"
+        super().finalize_options()
+
     def run(self):
         _build.run(self)
+
+        # The PyPI distribution is in alpha stage, signal this to the user
+        # with a warning at import ROOT time. We inject the warning in the
+        # __init__.py file of the package before the start of the build
+        _patch_root_init()
 
         # Configure ROOT build
         configure_command = shlex.split(
@@ -52,14 +87,21 @@ class ROOTBuild(_build):
             "-Dbuiltin_nlohmannjson=ON -Dbuiltin_tbb=ON -Dbuiltin_xrootd=ON "  # builtins
             "-Dbuiltin_lz4=ON -Dbuiltin_lzma=ON -Dbuiltin_zstd=ON -Dbuiltin_xxhash=ON "  # builtins
             "-Dpyroot=ON -Ddataframe=ON -Dxrootd=ON -Dssl=ON -Dimt=ON "
-            "-Droofit=ON "
-            # Next 4 paths represent the structure of the target binaries/headers/libs
+            "-Droofit=ON -Dmathmore=ON -Dbuiltin_fftw3=ON -Dbuiltin_gsl=ON "
+            f"-DCMAKE_INSTALL_PREFIX={INSTALL_DIR} -B {BUILD_DIR} -S {SOURCE_DIR} "
+            # Next paths represent the structure of the target binaries/headers/libs
             # as the target installation directory of the Python environment would expect
             f"-DCMAKE_INSTALL_BINDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/bin "
+            f"-DCMAKE_INSTALL_CMAKEDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/cmake "
+            f"-DCMAKE_INSTALL_FONTDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/fonts "
+            f"-DCMAKE_INSTALL_ICONDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/icons "
             f"-DCMAKE_INSTALL_INCLUDEDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/include "
             f"-DCMAKE_INSTALL_LIBDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/lib "
+            f"-DCMAKE_INSTALL_MACRODIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/macros "
+            f"-DCMAKE_INSTALL_MANDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/man "
             f"-DCMAKE_INSTALL_PYTHONDIR={ROOT_BUILD_INTERNAL_DIRNAME} "
-            f"-DCMAKE_INSTALL_PREFIX={INSTALL_DIR} -B {BUILD_DIR} -S {SOURCE_DIR}"
+            f"-DCMAKE_INSTALL_SYSCONFDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/etc "
+            f"-DCMAKE_INSTALL_TUTDIR={ROOT_BUILD_INTERNAL_DIRNAME}/ROOT/tutorials "
         )
         subprocess.run(configure_command, check=True)
 
@@ -69,6 +111,16 @@ class ROOTBuild(_build):
 
 
 class ROOTInstall(_install):
+    def finalize_options(self):
+        # Normalize the distribution name before installing
+        if self.distribution.metadata.name == "ROOT":
+            # Store original name for metadata
+            self.distribution.metadata._original_name = "ROOT"
+            # Use normalized name to comply with PEP625 and avoid errors
+            # caused by https://github.com/pypi/warehouse/pull/18924
+            self.distribution.metadata.name = "root"
+        super().finalize_options()
+
     def _get_install_path(self):
         if hasattr(self, "bdist_dir") and self.bdist_dir:
             install_path = self.bdist_dir
@@ -91,15 +143,8 @@ class ROOTInstall(_install):
         root_package_dir = os.path.join(install_path, "ROOT")
 
         # After the copy of the "mock" package structure from the ROOT installations, these are the
-        # leftover directories that still need to be copied
-        self.copy_tree(os.path.join(INSTALL_DIR, "cmake"), os.path.join(root_package_dir, "cmake"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "etc"), os.path.join(root_package_dir, "etc"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "fonts"), os.path.join(root_package_dir, "fonts"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "icons"), os.path.join(root_package_dir, "icons"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "macros"), os.path.join(root_package_dir, "macros"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "man"), os.path.join(root_package_dir, "man"))
+        # leftover files that still need to be copied
         self.copy_tree(os.path.join(INSTALL_DIR, "README"), os.path.join(root_package_dir, "README"))
-        self.copy_tree(os.path.join(INSTALL_DIR, "tutorials"), os.path.join(root_package_dir, "tutorials"))
         self.copy_file(os.path.join(INSTALL_DIR, "LICENSE"), os.path.join(root_package_dir, "LICENSE"))
 
     def get_outputs(self):

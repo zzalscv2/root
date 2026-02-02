@@ -12,7 +12,6 @@
  *************************************************************************/
 
 #include <ROOT/RCluster.hxx>
-#include <ROOT/RClusterPool.hxx>
 #include <ROOT/RLogger.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleModel.hxx>
@@ -30,6 +29,7 @@
 #include <RVersion.h>
 #include <TDirectory.h>
 #include <TError.h>
+#include <TVirtualStreamerInfo.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -43,16 +43,6 @@
 #include <mutex>
 
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
-using ROOT::Internal::MakeUninitArray;
-using ROOT::Internal::RCluster;
-using ROOT::Internal::RClusterPool;
-using ROOT::Internal::RNTupleCompressor;
-using ROOT::Internal::RNTupleDecompressor;
-using ROOT::Internal::RNTupleFileWriter;
-using ROOT::Internal::RNTupleSerializer;
-using ROOT::Internal::ROnDiskPage;
-using ROOT::Internal::ROnDiskPageMap;
-using ROOT::Internal::RPagePool;
 
 ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, const ROOT::RNTupleWriteOptions &options)
    : RPagePersistentSink(ntupleName, options)
@@ -75,6 +65,13 @@ ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, TDirec
    fWriter = RNTupleFileWriter::Append(ntupleName, fileOrDirectory, options.GetMaxKeySize());
 }
 
+ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, ROOT::Experimental::RFile &file,
+                                             std::string_view ntupleDir, const ROOT::RNTupleWriteOptions &options)
+   : RPageSinkFile(ntupleName, options)
+{
+   fWriter = RNTupleFileWriter::Append(ntupleName, file, ntupleDir, options.GetMaxKeySize());
+}
+
 ROOT::Internal::RPageSinkFile::~RPageSinkFile() {}
 
 void ROOT::Internal::RPageSinkFile::InitImpl(unsigned char *serializedHeader, std::uint32_t length)
@@ -83,6 +80,37 @@ void ROOT::Internal::RPageSinkFile::InitImpl(unsigned char *serializedHeader, st
    auto szZipHeader =
       RNTupleCompressor::Zip(serializedHeader, length, GetWriteOptions().GetCompression(), zipBuffer.get());
    fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
+}
+
+void ROOT::Internal::RPageSinkFile::UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset,
+                                                 ROOT::NTupleSize_t firstEntry)
+{
+   RPagePersistentSink::UpdateSchema(changeset, firstEntry);
+
+   auto fnAddStreamerInfo = [this](const ROOT::RFieldBase *field) {
+      const TClass *cl = nullptr;
+      if (auto classField = dynamic_cast<const RClassField *>(field)) {
+         cl = classField->GetClass();
+      } else if (auto streamerField = dynamic_cast<const RStreamerField *>(field)) {
+         cl = streamerField->GetClass();
+      }
+      if (!cl)
+         return;
+
+      auto streamerInfo = cl->GetStreamerInfo(field->GetTypeVersion());
+      if (!streamerInfo) {
+         throw RException(R__FAIL(std::string("cannot get streamerInfo for ") + cl->GetName() + " [" +
+                                  std::to_string(field->GetTypeVersion()) + "]"));
+      }
+      fInfosOfClassFields[streamerInfo->GetNumber()] = streamerInfo;
+   };
+
+   for (const auto field : changeset.fAddedFields) {
+      fnAddStreamerInfo(field);
+      for (const auto &subField : *field) {
+         fnAddStreamerInfo(&subField);
+      }
+   }
 }
 
 inline ROOT::RNTupleLocator
@@ -244,7 +272,18 @@ ROOT::Internal::RPageSinkFile::CommitClusterGroupImpl(unsigned char *serializedP
 
 void ROOT::Internal::RPageSinkFile::CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length)
 {
-   fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
+   // Add the streamer info records from streamer fields: because of runtime polymorphism we may need to add additional
+   // types not covered by the type names of the class fields
+   for (const auto &extraTypeInfo : fDescriptorBuilder.GetDescriptor().GetExtraTypeInfoIterable()) {
+      if (extraTypeInfo.GetContentId() != EExtraTypeInfoIds::kStreamerInfo)
+         continue;
+      // Ideally, we would avoid deserializing the streamer info records of the streamer fields that we just serialized.
+      // However, this happens only once at the end of writing and only when streamer fields are used, so the
+      // preference here is for code simplicity.
+      fInfosOfClassFields.merge(RNTupleSerializer::DeserializeStreamerInfos(extraTypeInfo.GetContent()).Unwrap());
+   }
+   fWriter->UpdateStreamerInfos(fInfosOfClassFields);
+
    auto bufFooterZip = MakeUninitArray<unsigned char>(length);
    auto szFooterZip =
       RNTupleCompressor::Zip(serializedFooter, length, GetWriteOptions().GetCompression(), bufFooterZip.get());
@@ -255,9 +294,7 @@ void ROOT::Internal::RPageSinkFile::CommitDatasetImpl(unsigned char *serializedF
 ////////////////////////////////////////////////////////////////////////////////
 
 ROOT::Internal::RPageSourceFile::RPageSourceFile(std::string_view ntupleName, const ROOT::RNTupleReadOptions &opts)
-   : RPageSource(ntupleName, opts),
-     fClusterPool(
-        std::make_unique<RClusterPool>(*this, ROOT::Internal::RNTupleReadOptionsManip::GetClusterBunchSize(opts)))
+   : RPageSource(ntupleName, opts)
 {
    EnableDefaultMetrics("RPageSourceFile");
 }
@@ -305,7 +342,19 @@ ROOT::Internal::RPageSourceFile::CreateFromAnchor(const RNTuple &anchor, const R
    return pageSource;
 }
 
-ROOT::Internal::RPageSourceFile::~RPageSourceFile() = default;
+ROOT::Internal::RPageSourceFile::~RPageSourceFile()
+{
+   fClusterPool.StopBackgroundThread();
+}
+
+std::unique_ptr<ROOT::Internal::RPageSourceFile>
+ROOT::Internal::RPageSourceFile::OpenWithDifferentAnchor(const RNTuple &anchor, const ROOT::RNTupleReadOptions &options)
+{
+   auto pageSource = std::make_unique<RPageSourceFile>("", fFile->Clone(), options);
+   pageSource->fAnchor = anchor;
+   // NOTE: fNTupleName gets set only upon Attach().
+   return pageSource;
+}
 
 void ROOT::Internal::RPageSourceFile::LoadStructureImpl()
 {
@@ -459,7 +508,7 @@ ROOT::Internal::RPageRef ROOT::Internal::RPageSourceFile::LoadPageImpl(ColumnHan
       sealedPage.SetBuffer(directReadBuffer.get());
    } else {
       if (!fCurrentCluster || (fCurrentCluster->GetId() != clusterId) || !fCurrentCluster->ContainsColumn(columnId))
-         fCurrentCluster = fClusterPool->GetCluster(clusterId, fActivePhysicalColumns.ToColumnSet());
+         fCurrentCluster = fClusterPool.GetCluster(clusterId, fActivePhysicalColumns.ToColumnSet());
       R__ASSERT(fCurrentCluster->ContainsColumn(columnId));
 
       auto cachedPageRef =
@@ -509,18 +558,17 @@ ROOT::Internal::RPageSourceFile::PrepareSingleCluster(const RCluster::RKey &clus
    std::vector<ROnDiskPageLocator> onDiskPages;
    auto activeSize = 0;
    auto pageZeroMap = std::make_unique<ROnDiskPageMap>();
-   PrepareLoadCluster(clusterKey, *pageZeroMap,
-                      [&](ROOT::DescriptorId_t physicalColumnId, ROOT::NTupleSize_t pageNo,
-                          const ROOT::RClusterDescriptor::RPageInfo &pageInfo) {
-                         const auto &pageLocator = pageInfo.GetLocator();
-                         if (pageLocator.GetType() == RNTupleLocator::kTypeUnknown)
-                            throw RException(R__FAIL("tried to read a page with an unknown locator"));
-                         const auto nBytes =
-                            pageLocator.GetNBytesOnStorage() + pageInfo.HasChecksum() * kNBytesPageChecksum;
-                         activeSize += nBytes;
-                         onDiskPages.push_back(
-                            {physicalColumnId, pageNo, pageLocator.GetPosition<std::uint64_t>(), nBytes, 0});
-                      });
+   PrepareLoadCluster(
+      clusterKey, *pageZeroMap,
+      [&](ROOT::DescriptorId_t physicalColumnId, ROOT::NTupleSize_t pageNo,
+          const ROOT::RClusterDescriptor::RPageInfo &pageInfo) {
+         const auto &pageLocator = pageInfo.GetLocator();
+         if (pageLocator.GetType() == RNTupleLocator::kTypeUnknown)
+            throw RException(R__FAIL("tried to read a page with an unknown locator"));
+         const auto nBytes = pageLocator.GetNBytesOnStorage() + pageInfo.HasChecksum() * kNBytesPageChecksum;
+         activeSize += nBytes;
+         onDiskPages.push_back({physicalColumnId, pageNo, pageLocator.GetPosition<std::uint64_t>(), nBytes, 0});
+      });
 
    // Linearize the page requests by file offset
    std::sort(onDiskPages.begin(), onDiskPages.end(),

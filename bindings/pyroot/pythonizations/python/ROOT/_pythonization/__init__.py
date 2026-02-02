@@ -14,8 +14,6 @@ import traceback
 
 import cppyy
 
-from ._generic import pythonize_generic
-
 # \cond INTERNALS
 gbl_namespace = cppyy.gbl
 # \endcond
@@ -70,6 +68,7 @@ def pythonization(class_name, ns="::", is_prefix=False):
 
         def passes_filter(class_name):
             return any(class_name.startswith(prefix) for prefix in target)
+
     else:
 
         def passes_filter(class_name):
@@ -114,6 +113,7 @@ def pythonization(class_name, ns="::", is_prefix=False):
                 name (string): name of the class that is the current candidate
                     to be pythonized.
             """
+            from ._generic import pythonize_generic
 
             fqn = klass.__cpp_name__
 
@@ -337,4 +337,66 @@ def _register_pythonizations():
             importlib.import_module(__name__ + "." + module_name)
 
 
+def _wait_press_windows():
+   from ROOT import gSystem
+   import msvcrt
+   import time
+
+   while not gSystem.ProcessEvents():
+      if msvcrt.kbhit():
+         k = msvcrt.getch()
+         if k[0] == 32:
+            break
+      else:
+         time.sleep(0.01)
+
+
+def _wait_press_posix():
+   from ROOT import gSystem
+   import sys
+   import select
+   import tty
+   import termios
+   import time
+
+   old_settings = termios.tcgetattr(sys.stdin)
+
+   tty.setcbreak(sys.stdin.fileno())
+
+   try:
+
+      while not gSystem.ProcessEvents():
+         c = ''
+         if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+            c = sys.stdin.read(1)
+         if (c == '\x20'):
+            break
+         time.sleep(0.01)
+
+   finally:
+      termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+
+def _run_root_event_loop():
+   from ROOT import gROOT
+   import os
+   import sys
+
+   # no special handling in batch mode
+   if gROOT.IsBatch():
+      return
+
+   # no special handling in case of notebooks
+   if 'IPython' in sys.modules and sys.modules['IPython'].version_info[0] >= 5:
+      return
+
+   print("Press <space> key to continue")
+
+   if os.name == 'nt':
+      _wait_press_windows()
+   else:
+      _wait_press_posix()
+
+
 # \endcond
+

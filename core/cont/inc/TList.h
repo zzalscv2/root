@@ -38,9 +38,9 @@ class TListIter;
 class TList : public TSeqCollection {
 
 friend  class TListIter;
-
-protected:
+public:
    using TObjLinkPtr_t = std::shared_ptr<TObjLink>;
+protected:
    using TObjLinkWeakPtr_t = std::weak_ptr<TObjLink>;
 
    TObjLinkPtr_t     fFirst;     //! pointer to first entry in linked list
@@ -79,17 +79,22 @@ public:
    TIterator        *MakeIterator(Bool_t dir = kIterForward) const override;
 
    void              Add(TObject *obj) override { AddLast(obj); }
-   virtual void      Add(TObject *obj, Option_t *opt) { AddLast(obj, opt); }
+   void              Add(TObject *obj, Option_t *opt) override { AddLast(obj, opt); }
    void              AddFirst(TObject *obj) override;
-   virtual void      AddFirst(TObject *obj, Option_t *opt);
+   void              AddFirst(TObject *obj, Option_t *opt) override;
    void              AddLast(TObject *obj) override;
-   virtual void      AddLast(TObject *obj, Option_t *opt);
+   void              AddLast(TObject *obj, Option_t *opt) override;
    void              AddAt(TObject *obj, Int_t idx) override;
+   void              AddAt(TObject *obj, Int_t idx, Option_t *opt) override;
    void              AddAfter(const TObject *after, TObject *obj) override;
    virtual void      AddAfter(TObjLink *after, TObject *obj);
+   void              AddAfter(const TObject *after, TObject *obj, Option_t *opt) override;
+   virtual void      AddAfter(TObjLink *after, TObject *obj, Option_t *opt);
    void              AddBefore(const TObject *before, TObject *obj) override;
    virtual void      AddBefore(TObjLink *before, TObject *obj);
-   TObject  *Remove(TObject *obj) override;
+   void              AddBefore(const TObject *before, TObject *obj, Option_t *opt) override;
+   virtual void      AddBefore(TObjLink *before, TObject *obj, Option_t *opt);
+   TObject          *Remove(TObject *obj) override;
    virtual TObject  *Remove(TObjLink *lnk);
    TObject          *Remove(const TObjLinkPtr_t &lnk) { return Remove(lnk.get()); }
    void              RemoveLast() override;
@@ -121,9 +126,9 @@ public:
 class TObjLink : public std::enable_shared_from_this<TObjLink> {
 
 friend class TList;
-
-private:
+public:
    using TObjLinkPtr_t = std::shared_ptr<TObjLink>;
+private:
    using TObjLinkWeakPtr_t = std::weak_ptr<TObjLink>;
 
    TObjLinkPtr_t     fNext;

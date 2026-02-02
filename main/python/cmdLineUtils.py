@@ -195,11 +195,9 @@ def isDirectoryKey(key):
     """
     Return True if the object, corresponding to the key, inherits from TDirectory
     """
-    import cppyy
-
     classname = key.GetClassName()
     cl = ROOT.gROOT.GetClass(classname)
-    if cl == cppyy.nullptr:
+    if not cl:
         logging.warning("Unknown class to ROOT: " + classname)
         return False
     return cl.InheritsFrom(ROOT.TDirectory.Class())
@@ -209,11 +207,9 @@ def isTreeKey(key):
     """
     Return True if the object, corresponding to the key, inherits from TTree
     """
-    import cppyy
-
     classname = key.GetClassName()
     cl = ROOT.gROOT.GetClass(classname)
-    if cl == cppyy.nullptr:
+    if not cl:
         logging.warning("Unknown class to ROOT: " + classname)
         return False
     return cl.InheritsFrom(ROOT.TTree.Class())
@@ -223,11 +219,9 @@ def isTHnSparseKey(key):
     """
     Return True if the object, corresponding to the key, inherits from THnSparse
     """
-    import cppyy
-
     classname = key.GetClassName()
     cl = ROOT.gROOT.GetClass(classname)
-    if cl == cppyy.nullptr:
+    if not cl:
         logging.warning("Unknown class to ROOT: " + classname)
         return False
     return cl.InheritsFrom(ROOT.THnSparse.Class())
@@ -790,52 +784,6 @@ REPLACE_HELP = "replace object if already existing"
 ##########
 
 ##########
-# ROOTCP
-
-
-def _copyObjects(fileName, pathSplitList, destFile, destPathSplit, oneFile, recursive, replace):
-    retcode = 0
-    destFileName = destFile.GetName()
-    rootFile = openROOTFile(fileName) if fileName != destFileName else destFile
-    if not rootFile:
-        return 1
-    ROOT.gROOT.GetListOfFiles().Remove(rootFile)  # Fast copy necessity
-    for pathSplit in pathSplitList:
-        oneSource = oneFile and len(pathSplitList) == 1
-        retcode += copyRootObject(rootFile, pathSplit, destFile, destPathSplit, oneSource, recursive, replace)
-    if fileName != destFileName:
-        rootFile.Close()
-    return retcode
-
-
-def rootCp(sourceList, destFileName, destPathSplit, compress=None, recreate=False, recursive=False, replace=False):
-    # Check arguments
-    if sourceList == [] or destFileName == "":
-        return 1
-    if recreate and destFileName in [n[0] for n in sourceList]:
-        logging.error("cannot recreate destination file if this is also a source file")
-        return 1
-
-    # Open destination file
-    destFile = openROOTFileCompress(destFileName, compress, recreate)
-    if not destFile:
-        return 1
-    ROOT.gROOT.GetListOfFiles().Remove(destFile)  # Fast copy necessity
-
-    # Loop on the root files
-    retcode = 0
-    for fileName, pathSplitList in sourceList:
-        retcode += _copyObjects(
-            fileName, pathSplitList, destFile, destPathSplit, len(sourceList) == 1, recursive, replace
-        )
-    destFile.Close()
-    return retcode
-
-
-# End of ROOTCP
-##########
-
-##########
 # ROOTEVENTSELECTOR
 
 
@@ -1064,13 +1012,24 @@ def rootMv(sourceList, destFileName, destPathSplit, compress=None, interactive=F
 # ROOTPRINT
 
 
-def _keyListExtended(rootFile, pathSplitList):
+def _keyListExtended(rootFile, pathSplitList, recursive = False):
+    prefixList = []
     keyList, dirList = keyClassSplitter(rootFile, pathSplitList)
     for pathSplit in dirList:
         keyList.extend(getKeyList(rootFile, pathSplit))
+    subList = [key for key in keyList if isDirectoryKey(key)]
     keyList = [key for key in keyList if not isDirectoryKey(key)]
-    keyListSort(keyList)
-    return keyList
+    prefixList = ["" for key in keyList]
+    if recursive:
+        for subdir in subList:
+            subkeyList, subprefixList = _keyListExtended(ROOT.gDirectory.Get(subdir.GetName()), pathSplitList, recursive)
+            keyList.extend(subkeyList)
+            prefixList.extend([subdir.GetName() + "_" + prefix for prefix in subprefixList])
+    if recursive:
+        keyList, prefixList = (list(t) for t in zip(*sorted(zip(keyList, prefixList), key=lambda x: x[0].GetName().lower())))
+    else:
+        keyListSort(keyList)
+    return keyList, prefixList
 
 
 def rootPrint(
@@ -1083,6 +1042,7 @@ def rootPrint(
     sizeOption=None,
     styleOption=None,
     verboseOption=False,
+    recursiveOption=False,
 ):
     # Check arguments
     if sourceList == []:
@@ -1162,8 +1122,8 @@ def rootPrint(
             continue
         openRootFiles.append(rootFile)
         # Fill the key list (almost the same as in root)
-        keyList = _keyListExtended(rootFile, pathSplitList)
-        for key in keyList:
+        keyList, prefixList = _keyListExtended(rootFile, pathSplitList, recursiveOption)
+        for k, key in enumerate(keyList):
             if isTreeKey(key):
                 pass
             else:
@@ -1182,8 +1142,9 @@ def rootPrint(
                         canvas.Clear()
                         canvas.Divide(x, y)
                 else:
+                    prefix = prefixList[k]
                     if not outputOption:
-                        outputFileName = key.GetName() + "." + formatOption
+                        outputFileName = prefix + key.GetName() + "." + formatOption
                         if directoryOption:
                             outputFileName = os.path.join(directoryOption, outputFileName)
                     if outputOption or formatOption == "pdf":

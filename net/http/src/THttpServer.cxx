@@ -40,47 +40,19 @@
 #include <thread>
 
 class THttpTimer : public TTimer {
-   Long_t fNormalTmout{0};
-   Bool_t fSlow{kFALSE};
-   Int_t fSlowCnt{0};
 
 public:
    THttpServer &fServer; ///!< server processing requests
 
    /// constructor
-   THttpTimer(Long_t milliSec, Bool_t mode, THttpServer &serv) : TTimer(milliSec, mode), fNormalTmout(milliSec), fServer(serv) {}
+   THttpTimer(Long_t milliSec, Bool_t mode, THttpServer &serv) : TTimer(milliSec, mode), fServer(serv) {}
 
-   void SetSlow(Bool_t flag)
-   {
-      fSlow = flag;
-      fSlowCnt = 0;
-      Long_t ms = fNormalTmout;
-      if (fSlow) {
-         if (ms < 100)
-            ms = 500;
-         else if (ms < 500)
-            ms = 3000;
-         else
-            ms = 10000;
-      }
-
-      SetTime(ms);
-   }
-   Bool_t IsSlow() const { return fSlow; }
 
    /// timeout handler
    /// used to process http requests in main ROOT thread
    void Timeout() override
    {
-      Int_t nprocess = fServer.ProcessRequests();
-
-      if (nprocess > 0) {
-         fSlowCnt = 0;
-         if (IsSlow())
-            SetSlow(kFALSE);
-      } else if (!IsSlow() && (fSlowCnt++ > 10)) {
-           SetSlow(kTRUE);
-      }
+      fServer.ProcessRequests();
    }
 };
 
@@ -656,9 +628,6 @@ Bool_t THttpServer::ExecuteHttp(std::shared_ptr<THttpCallArg> arg)
       return kTRUE;
    }
 
-   if (fTimer && fTimer->IsSlow())
-      fTimer->SetSlow(kFALSE);
-
    // add call arg to the list
    std::unique_lock<std::mutex> lk(fMutex);
    arg->fNotifyFlag = kFALSE;
@@ -1170,9 +1139,8 @@ void THttpServer::ProcessRequest(std::shared_ptr<THttpCallArg> arg)
       if (arg->fContent.empty())
          arg->Set404();
    } else if ((filename == "h.xml") || (filename == "get.xml")) {
-
-      Bool_t compact = arg->fQuery.Index("compact") != kNPOS;
-
+      Bool_t compact = arg->fQuery.Index("compact") != kNPOS,
+             processed = kFALSE;
       TString res;
 
       res.Form("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -1183,20 +1151,22 @@ void THttpServer::ProcessRequest(std::shared_ptr<THttpCallArg> arg)
          res.Append("\n");
       {
          TRootSnifferStoreXml store(res, compact);
-
+         auto len0 = res.Length();
          const char *topname = fTopName.Data();
          if (arg->fTopName.Length() > 0)
             topname = arg->fTopName.Data();
          fSniffer->ScanHierarchy(topname, arg->fPathName.Data(), &store, filename == "get.xml");
+         processed = res.Length() > len0;
       }
 
       res.Append("</root>");
       if (!compact)
          res.Append("\n");
-
-      arg->SetContent(std::string(res.Data()));
-
-      arg->SetXml();
+      if (processed) {
+         arg->SetContent(std::string(res.Data()));
+         arg->SetXml();
+      } else
+         MissedRequest(arg.get());
    } else if (filename == "h.json") {
       TString res;
       TRootSnifferStoreJson store(res, arg->fQuery.Index("compact") != kNPOS);
@@ -1204,8 +1174,12 @@ void THttpServer::ProcessRequest(std::shared_ptr<THttpCallArg> arg)
       if (arg->fTopName.Length() > 0)
          topname = arg->fTopName.Data();
       fSniffer->ScanHierarchy(topname, arg->fPathName.Data(), &store);
-      arg->SetContent(std::string(res.Data()));
-      arg->SetJson();
+
+      if (res.Length() > 0) {
+         arg->SetContent(std::string(res.Data()));
+         arg->SetJson();
+      } else
+         MissedRequest(arg.get());
    } else if (fSniffer->Produce(arg->fPathName.Data(), filename.Data(), arg->fQuery.Data(), arg->fContent)) {
       // define content type base on extension
       arg->SetContentType(GetMimeType(filename.Data()));
@@ -1316,9 +1290,6 @@ Bool_t THttpServer::ExecuteWS(std::shared_ptr<THttpCallArg> &arg, Bool_t externa
       handler = dynamic_cast<THttpWSHandler *>(fSniffer->FindTObjectInHierarchy(arg->fPathName.Data()));
 
    if (external_thrd && (!handler || !handler->AllowMTProcess())) {
-
-      if (fTimer && fTimer->IsSlow())
-         fTimer->SetSlow(kFALSE);
 
       std::unique_lock<std::mutex> lk(fMutex);
       fArgs.push(arg);

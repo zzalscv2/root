@@ -12,11 +12,16 @@
 #include "TLorentzVector.h"
 #include <Math/Vector3D.h>
 #include <ROOT/TestSupport.hxx>
+#include "ROOT/TTreeReaderValueFast.hxx"
+#include "TNtuple.h"
+
+#include "TTreePlayer.h"
 
 #include "gtest/gtest.h"
 
 #include <string>
 #include <vector>
+#include <fstream>
 
 // ROOT-10702
 TEST(TTreeReaderRegressions, CompositeTypeWithNameClash)
@@ -211,10 +216,9 @@ TEST(TTreeFormulaRegressions, ConstantAlias)
 // ROOT-8577 (JIRA)
 #define MYSTRUCT struct MyS { int x; };
 MYSTRUCT
-#define TO_LITERAL(string) _QUOTE_(string)
 TEST(TTreeFormulaRegressions, WrongName)
 {
-   gInterpreter->Declare(TO_LITERAL(MYSTRUCT));
+   gInterpreter->Declare(_R_QUOTEVAL_(MYSTRUCT));
    MyS s;
    TLorentzVector v(1, 2, 3, 4);
    TTree t("t", "t");
@@ -334,5 +338,250 @@ TEST(TTreeReaderRegressions, XYZVectors)
    }
    for (auto filename : {filename1, filename2}) {
       gSystem->Unlink(filename);
+   }
+}
+
+// ROOT-8842 https://its.cern.ch/jira/browse/ROOT-8842
+TEST(TTreeReaderRegressions, ValueFastTuple)
+{
+   TNtuple tree("tuple", "ROOT-8842", "px:py:pz:energy");
+   for (auto i = 0; i < 1000000; ++i)
+      tree.Fill(i, i + 1, i + 2, i + 3);
+   ROOT::Experimental::TTreeReaderFast reader(&tree);
+   ROOT::Experimental::TTreeReaderValueFast<float> px(reader, "px");
+   ROOT::Experimental::TTreeReaderValueFast<float> py(reader, "py");
+   ROOT::Experimental::TTreeReaderValueFast<float> pz(reader, "pz");
+   double total = 0.0;
+   // reader.SetEntry(0); If I uncomment this, the crash disappears
+   for (auto it = reader.begin(); it != reader.end(); ++it)
+      total += sqrt((*px) * (*px) + (*py) * (*py) + (*pz) * (*pz));
+   EXPECT_NEAR(total, 866026269930.1345215, 100);
+}
+
+// https://github.com/root-project/root/issues/20226
+TEST(TTreeScan, IntOverflow)
+{
+   struct DatasetRAII {
+      const char *fTreeName{"tree_20226"};
+      const char *fFileName{"tree_20226.root"};
+      DatasetRAII()
+      {
+         auto file = std::make_unique<TFile>(fFileName, "recreate");
+         auto tree = std::make_unique<TTree>(fTreeName, fTreeName);
+
+         int val{};
+         tree->Branch("val", &val);
+         for (; val < 10; val++)
+            tree->Fill();
+         file->Write();
+      }
+
+      ~DatasetRAII() { std::remove(fFileName); }
+   } dataset;
+
+   auto file = std::make_unique<TFile>(dataset.fFileName);
+   std::unique_ptr<TTree> tree{file->Get<TTree>(dataset.fTreeName)};
+
+   std::ostringstream strCout;
+   {
+      if (auto *treePlayer = static_cast<TTreePlayer *>(tree->GetPlayer())) {
+         struct FileRAII {
+            const char *fPath;
+            FileRAII(const char *name) : fPath(name) {}
+            ~FileRAII() { std::remove(fPath); }
+         } redirectFile{"tree_20226_regression_redirect.txt"};
+         treePlayer->SetScanRedirect(true);
+         treePlayer->SetScanFileName(redirectFile.fPath);
+         tree->Scan("val", "", "", TTree::kMaxEntries, 3);
+
+         std::ifstream redirectStream(redirectFile.fPath);
+         std::stringstream redirectOutput;
+         redirectOutput << redirectStream.rdbuf();
+
+         const static std::string expectedScanOut{
+            R"Scan(************************
+*    Row   *       val *
+************************
+*        3 *         3 *
+*        4 *         4 *
+*        5 *         5 *
+*        6 *         6 *
+*        7 *         7 *
+*        8 *         8 *
+*        9 *         9 *
+************************
+)Scan"};
+         EXPECT_EQ(redirectOutput.str(), expectedScanOut);
+      } else
+         throw std::runtime_error("Could not retrieve TTreePlayer from main tree!");
+   }
+}
+
+// https://github.com/root-project/root/issues/20228
+TEST(TTreeDraw, IntOverflow)
+{
+   struct DatasetRAII {
+      const char *fTreeName{"tree_20228"};
+      const char *fFileName{"tree_20228.root"};
+      DatasetRAII()
+      {
+         auto file = std::make_unique<TFile>(fFileName, "recreate");
+         auto tree = std::make_unique<TTree>(fTreeName, fTreeName);
+
+         int val{};
+         tree->Branch("val", &val);
+         for (; val < 10; val++)
+            tree->Fill();
+         file->Write();
+      }
+
+      ~DatasetRAII() { std::remove(fFileName); }
+   } dataset;
+
+   auto file = std::make_unique<TFile>(dataset.fFileName);
+   std::unique_ptr<TTree> tree{file->Get<TTree>(dataset.fTreeName)};
+
+   // TTree::Draw returns the number of entries selected. In this case it should be 7,
+   // but due to the regression, it was zero
+   tree->SetMaxEntryLoop(TTree::kMaxEntries);
+   auto nEntriesSelected = tree->Draw("val", "", "", TTree::kMaxEntries, 3);
+   EXPECT_EQ(nEntriesSelected, 7);
+}
+
+// https://github.com/root-project/root/issues/20248
+TEST(TTreeScan, chainNameWithDifferentTreeName)
+{
+   struct DatasetRAII {
+      const char *fTreeName{"tree_20248"};
+      const char *fFileName{"tree_20248.root"};
+      DatasetRAII()
+      {
+         auto file = std::make_unique<TFile>(fFileName, "recreate");
+         auto tree = std::make_unique<TTree>(fTreeName, fTreeName);
+
+         int val{};
+         tree->Branch("val", &val);
+         for (; val < 5; val++)
+            tree->Fill();
+         file->Write();
+      }
+
+      ~DatasetRAII() { std::remove(fFileName); }
+   } dataset;
+
+   TChain c{"differentNameForChain"};
+   c.Add((std::string(dataset.fFileName) + "?#" + dataset.fTreeName).c_str());
+
+   ASSERT_NE(c.FindBranch("differentNameForChain.val"), nullptr);
+
+   std::ostringstream strCout;
+   {
+      if (auto *treePlayer = static_cast<TTreePlayer *>(c.GetPlayer())) {
+         struct FileRAII {
+            const char *fPath;
+            FileRAII(const char *name) : fPath(name) {}
+            ~FileRAII() { std::remove(fPath); }
+         } redirectFile{"tree_20248_regression_redirect.txt"};
+         treePlayer->SetScanRedirect(true);
+         treePlayer->SetScanFileName(redirectFile.fPath);
+         c.Scan("differentNameForChain.val", "", "colsize=30");
+
+         std::ifstream redirectStream(redirectFile.fPath);
+         std::stringstream redirectOutput;
+         redirectOutput << redirectStream.rdbuf();
+
+         const static std::string expectedScanOut{
+            R"Scan(*********************************************
+*    Row   *      differentNameForChain.val *
+*********************************************
+*        0 *                              0 *
+*        1 *                              1 *
+*        2 *                              2 *
+*        3 *                              3 *
+*        4 *                              4 *
+*********************************************
+)Scan"};
+         EXPECT_EQ(redirectOutput.str(), expectedScanOut);
+      } else
+         throw std::runtime_error("Could not retrieve TTreePlayer from main tree!");
+   }
+}
+
+// https://github.com/root-project/root/issues/20249
+TEST(TTreeScan, TTreeGetBranchOfFriendTChain)
+{
+   struct DatasetRAII {
+      const char *fTreeNameStepZero{"tree_20249_zero"};
+      const char *fFileNameStepZero{"tree_20249_zero.root"};
+      const char *fTreeNameStepOne{"tree_20249_one"};
+      const char *fFileNameStepOne{"tree_20249_one.root"};
+
+      void WriteData(const char *name, const char *treename, int first, int last)
+      {
+         auto file = std::make_unique<TFile>(name, "RECREATE");
+         auto tree = std::make_unique<TTree>(treename, treename);
+
+         int value{};
+         tree->Branch("value", &value);
+
+         for (value = first; value < last; ++value) {
+            tree->Fill();
+         }
+
+         file->Write();
+      }
+
+      DatasetRAII()
+      {
+         WriteData(fFileNameStepZero, fTreeNameStepZero, 3, 7);
+         WriteData(fFileNameStepOne, fTreeNameStepOne, 0, 4);
+      }
+
+      ~DatasetRAII()
+      {
+         std::remove(fFileNameStepZero);
+         std::remove(fFileNameStepOne);
+      }
+   } dataset;
+
+   auto chain0 = std::make_unique<TChain>("stepzerochain");
+   chain0->Add((std::string(dataset.fFileNameStepZero) + "?#" + dataset.fTreeNameStepZero).c_str());
+
+   auto file1 = std::make_unique<TFile>(dataset.fFileNameStepOne);
+   std::unique_ptr<TTree> tree1{file1->Get<TTree>(dataset.fTreeNameStepOne)};
+   tree1->AddFriend(chain0.get());
+
+   ASSERT_NE(tree1->FindBranch("stepzerochain.value"), nullptr);
+
+   std::ostringstream strCout;
+   {
+      if (auto *treePlayer = static_cast<TTreePlayer *>(tree1->GetPlayer())) {
+         struct FileRAII {
+            const char *fPath;
+            FileRAII(const char *name) : fPath(name) {}
+            ~FileRAII() { std::remove(fPath); }
+         } redirectFile{"tree_20249_regression_redirect.txt"};
+         treePlayer->SetScanRedirect(true);
+         treePlayer->SetScanFileName(redirectFile.fPath);
+
+         tree1->Scan("value:stepzerochain.value", "", "colsize=24");
+
+         std::ifstream redirectStream(redirectFile.fPath);
+         std::stringstream redirectOutput;
+         redirectOutput << redirectStream.rdbuf();
+
+         const static std::string expectedScanOut{
+            R"Scan(******************************************************************
+*    Row   *                    value *      stepzerochain.value *
+******************************************************************
+*        0 *                        0 *                        3 *
+*        1 *                        1 *                        4 *
+*        2 *                        2 *                        5 *
+*        3 *                        3 *                        6 *
+******************************************************************
+)Scan"};
+         EXPECT_EQ(redirectOutput.str(), expectedScanOut);
+      } else
+         throw std::runtime_error("Could not retrieve TTreePlayer from main tree!");
    }
 }

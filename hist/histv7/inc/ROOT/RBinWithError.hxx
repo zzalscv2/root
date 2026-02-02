@@ -5,6 +5,8 @@
 #ifndef ROOT_RBinWithError
 #define ROOT_RBinWithError
 
+#include "RHistUtils.hxx"
+
 namespace ROOT {
 namespace Experimental {
 
@@ -17,6 +19,9 @@ Feedback is welcome!
 struct RBinWithError final {
    double fSum = 0;
    double fSum2 = 0;
+
+   explicit operator float() const { return fSum; }
+   explicit operator double() const { return fSum; }
 
    RBinWithError &operator++()
    {
@@ -44,6 +49,34 @@ struct RBinWithError final {
       fSum += rhs.fSum;
       fSum2 += rhs.fSum2;
       return *this;
+   }
+
+   RBinWithError &operator*=(double factor)
+   {
+      fSum *= factor;
+      fSum2 *= factor * factor;
+      return *this;
+   }
+
+   void AtomicInc()
+   {
+      Internal::AtomicInc(&fSum);
+      Internal::AtomicInc(&fSum2);
+   }
+
+   void AtomicAdd(double w)
+   {
+      Internal::AtomicAdd(&fSum, w);
+      Internal::AtomicAdd(&fSum2, w * w);
+   }
+
+   /// Add another bin content using atomic instructions.
+   ///
+   /// \param[in] rhs another bin content that must not be modified during the operation
+   void AtomicAdd(const RBinWithError &rhs)
+   {
+      Internal::AtomicAdd(&fSum, rhs.fSum);
+      Internal::AtomicAdd(&fSum2, rhs.fSum2);
    }
 };
 

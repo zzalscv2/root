@@ -177,6 +177,10 @@ TApplication::TApplication(const char *appClassName, Int_t *argc, char **argv,
    if (fArgv)
       gSystem->SetProgname(fArgv[0]);
 
+   // Alternative to '-b' command line switch (i.e. for pyROOT)
+   if (gSystem->Getenv("ROOT_BATCH"))
+      MakeBatch();
+
    // Tell TSystem the TApplication has been created
    gSystem->NotifyApplicationCreated();
 
@@ -988,8 +992,8 @@ TString TApplication::GetSetup()
                                          gROOT->GetGitBranch(),
                                          gROOT->GetGitCommit()));
    }
-   lines.emplace_back(TString::Format("With %s",
-                                      gSystem->GetBuildCompilerVersionStr()));
+   lines.emplace_back(TString::Format("With %s std%ld",
+                                      gSystem->GetBuildCompilerVersionStr(), __cplusplus));
    lines.emplace_back("Binary directory: "+ gROOT->GetBinDir());
    lines.emplace_back("```");
    TString setup = "";
@@ -1809,12 +1813,12 @@ Longptr_t TApplication::ExecuteFile(const char *file, Int_t *error, Bool_t keep)
       while (s && (*s == ' ' || *s == '\t')) s++;   // strip-off leading blanks
 
       // very simple minded pre-processor parsing, only works in case macro file
-      // starts with "#ifndef __CINT__". In that case everything till next
-      // "#else" or "#endif" will be skipped.
+      // starts with "#ifndef __CLING__" (__CINT__ for backward compatibility).
+      // In that case everything till next "#else" or "#endif" will be skipped.
       if (*s == '#') {
          char *cs = Compress(currentline);
-         if (strstr(cs, "#ifndef__CINT__") ||
-             strstr(cs, "#if!defined(__CINT__)"))
+         if (strstr(cs, "#ifndef__CLING__") || strstr(cs, "#ifndef__CINT__") ||
+             strstr(cs, "#if!defined(__CLING__)") || strstr(cs, "#if!defined(__CINT__)"))
             ifndefc = 1;
          else if (ifndefc && (strstr(cs, "#ifdef") || strstr(cs, "#ifndef") ||
                   strstr(cs, "#ifdefined") || strstr(cs, "#if!defined")))

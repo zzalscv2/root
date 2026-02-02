@@ -1,10 +1,9 @@
 # -*- coding: UTF-8 -*-
-import py, sys, pytest, os
+import sys, pytest, os
 from pytest import mark, raises, skip
-from support import setup_make, pylong, pyunicode, maxvalue, ispypy, no_root_errors
+from support import setup_make, pylong, pyunicode, maxvalue, ispypy, IS_WINDOWS
 
-currpath = os.getcwd()
-test_dct = currpath + "/libstltypesDict"
+test_dct = "stltypes_cxx"
 
 global_n = 5
 
@@ -493,7 +492,7 @@ class TestSTLVECTOR:
         ll4[1] = 'a'
         raises(TypeError, a.vector_pair, ll4)
 
-    @mark.skip()
+    @mark.xfail(run=False, reason="Fatal Python error: Segmentation fault")
     def test12_vector_lifeline(self):
         """Check lifeline setting on vectors of objects"""
 
@@ -616,7 +615,7 @@ class TestSTLVECTOR:
         v = cppyy.gbl.std.vector(l)
         assert list(l) == l
 
-    @mark.xfail
+    @mark.xfail(strict=True)
     def test18_array_interface(self):
         """Test usage of __array__ from numpy"""
 
@@ -820,7 +819,7 @@ class TestSTLVECTOR:
             for i, d in zip(range(-5, 5, 1), data):
                 assert d == i
 
-    def test24_vector_to_span(self):
+    def test24_vector_to_span(self, capfd):
         """Vectors should convert to std::span without errors"""
 
         import cppyy
@@ -839,10 +838,14 @@ class TestSTLVECTOR:
         l = list(range(4))
         v = cppyy.gbl.std.vector["double"](l)
 
-        with no_root_errors():
-            result = cppyy.gbl.calc_cumsum(len(v), v)
+        result = cppyy.gbl.calc_cumsum(len(v), v)
 
         assert result == sum(l)
+
+        # Fail if there were interpreter errors:
+        captured = capfd.readouterr()
+        output = (captured.out + captured.err).lower()
+        assert "error:" not in output
 
 
 class TestSTLSTRING:
@@ -884,7 +887,6 @@ class TestSTLSTRING:
 
             raises(TypeError, c.get_string2, "temp string")
 
-    @mark.xfail()
     def test02_string_data_access(self):
         """Test access to std::string object data members"""
 
@@ -933,8 +935,6 @@ class TestSTLSTRING:
 
         assert tuple(cppyy.gbl.str_array_1) == ('a', 'b', 'c')
         str_array_2 = cppyy.gbl.str_array_2
-        # fix up the size
-        str_array_2.size = 4
         assert tuple(str_array_2) == ('d', 'e', 'f', 'g')
         assert tuple(str_array_2) == ('d', 'e', 'f', 'g')
 
@@ -1017,7 +1017,7 @@ class TestSTLSTRING:
         assert d[x] == 0
         assert d['x'] == 0
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test08_string_operators(self):
         """Mixing of C++ and Python types in global operators"""
 
@@ -1045,6 +1045,7 @@ class TestSTLSTRING:
         assert s1+s2 == "Hello, World!"
         assert s2+s1 == ", World!Hello"
 
+    @mark.xfail(strict=True, condition=IS_WINDOWS == 64, reason="AttributeError: <class cppyy.gbl.std.string at 0x0000021275350610> has no attribute 'size_type'")
     def test09_string_as_str_bytes(self):
         """Python-style methods of str/bytes on std::string"""
 
@@ -1107,7 +1108,7 @@ class TestSTLSTRING:
         assert s.rfind('c')  < 0
         assert s.rfind('c') == s.npos
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test10_string_in_repr_and_str_bytes(self):
         """Special cases for __str__/__repr__"""
 
@@ -1926,7 +1927,7 @@ class TestSTLTUPLE:
         t = std.make_tuple("aap", 42, 5.)
         assert std.tuple_size(type(t)).value == 3
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test03_tuple_iter(self):
         """Pack/unpack tuples"""
 
@@ -1941,7 +1942,7 @@ class TestSTLTUPLE:
         assert b == '2'
         assert c == 5.
 
-    @mark.xfail()
+    @mark.xfail(strict=True)
     def test04_tuple_lifeline(self):
         """Tuple memory management"""
 
@@ -1966,6 +1967,32 @@ class TestSTLTUPLE:
 
         assert s1.fInt == 42
         assert s2.fInt == 42
+
+    @mark.xfail(strict=True, condition=IS_WINDOWS, reason="The wrong values are read back from the tuple!")
+    def test05_tuple_assignment_operator(self):
+        """Check that using std::tuple<>::operator= works.
+        This used to fail because ROOT uses a different type to represent
+        std::tuple internally.
+        """
+        import cppyy
+
+        l1 = [1, 2, 3.0, 4.0]
+
+        long = cppyy.gbl.long
+        double = cppyy.gbl.double
+
+        # We need some container in which we can re-assign the tuple elements
+        container = cppyy.gbl.std.vector("std::tuple<long, long, double, double>")(2)
+
+        value = cppyy.gbl.std.make_tuple[long, long, double, double](*l1)
+
+        # This checks if the tuple assignment operator works from Python
+        container[0] = value
+
+        # Get back elements as a Python list
+        l2 = [cppyy.gbl.std.get[i](container[0]) for i in range(len(l1))]
+
+        assert l2 == l1
 
 
 class TestSTLPAIR:
@@ -2114,6 +2141,7 @@ class TestSTLEXCEPTION:
         gc.collect()
         assert cppyy.gbl.GetMyErrorCount() == 0
 
+    @mark.xfail(run=False, condition=IS_WINDOWS == 64, reason="Crashes on Windows 64 bit")
     def test04_from_cpp(self):
         """Catch C++ exceptiosn from C++"""
 
@@ -2147,5 +2175,33 @@ class TestSTLEXCEPTION:
         assert cppyy.gbl.GetMyErrorCount() == 0
 
 
+def has_cpp_20():
+    import cppyy
+
+    return cppyy.gbl.gInterpreter.ProcessLine("__cplusplus;") >= 202002
+
+
+@mark.skipif(not has_cpp_20(), reason="std::span requires C++20")
+class TestSTLSPAN:
+    import cppyy
+
+    def test01_span_iterators(self):
+        """
+        Test that std::span::begin() and std::span::end() can be used.
+
+        Covers https://github.com/root-project/root/issues/18837
+        """
+        import cppyy
+
+        l1 = [1, 2, 3]
+        v = cppyy.gbl.vector(int)(l1)
+        s = cppyy.gbl.span(int)(v)
+        s.begin()
+        s.end()
+        # Check that the iteration also works, which uses begin() and end()
+        # internally.
+        assert [b for b in s] == l1
+
+
 if __name__ == "__main__":
-    exit(pytest.main(args=['-sv', '-ra', __file__]))
+    exit(pytest.main(args=['-v', '-ra', __file__]))

@@ -16,6 +16,7 @@
 
 #include <ROOT/RError.hxx>
 #include <ROOT/RCluster.hxx>
+#include <ROOT/RClusterPool.hxx>
 #include <ROOT/RColumnElementBase.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
@@ -447,7 +448,7 @@ private:
    std::vector<ROOT::RClusterDescriptor::RPageRange> fOpenPageRanges;
 
    /// Union of the streamer info records that are sent from streamer fields to the sink before committing the dataset.
-   ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fStreamerInfos;
+   ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fInfosOfStreamerFields;
 
 protected:
    /// Set of optional features supported by the persistent sink
@@ -521,7 +522,7 @@ public:
 
    /// Updates the descriptor and calls InitImpl() that handles the backend-specific details (file, DAOS, etc.)
    void InitImpl(RNTupleModel &model) final;
-   void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset, ROOT::NTupleSize_t firstEntry) final;
+   void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset, ROOT::NTupleSize_t firstEntry) override;
    void UpdateExtraTypeInfo(const ROOT::RExtraTypeInfoDescriptor &extraTypeInfo) final;
 
    /// Initialize sink based on an existing descriptor and fill into the descriptor builder, optionally copying over
@@ -618,7 +619,7 @@ private:
    ROOT::DescriptorId_t fLastUsedCluster = ROOT::kInvalidDescriptorId;
    /// Clusters from where pages got preloaded in UnzipClusterImpl(), ordered by first entry number
    /// of the clusters. If the last used cluster changes in LoadPage(), all unused pages from
-   /// previous clusters are evicted from the page pool.
+   /// previous clusters are evicted from the page pool. Pinned clusters won't be evicted.
    std::map<ROOT::NTupleSize_t, ROOT::DescriptorId_t> fPreloadedClusters;
 
    /// Does nothing if fLastUsedCluster == clusterId. Otherwise, updated fLastUsedCluster
@@ -694,7 +695,14 @@ protected:
    ROOT::RNTupleReadOptions fOptions;
    /// The active columns are implicitly defined by the model fields or views
    RActivePhysicalColumns fActivePhysicalColumns;
+   /// Pinned clusters and their $2 * (cluster bunch size) - 1$ successors will not be evicted from the cluster pool.
+   /// Pages of pinned clusters won't be evicted from the page pool.
+   std::unordered_set<ROOT::DescriptorId_t> fPinnedClusters;
 
+   /// The cluster pool asynchronously preloads the next few clusters. Note that derived classes should call
+   /// fClusterPool.StopBackgroundThread() in their destructor so that the I/O background thread does not call
+   /// methods from the destructed derived class.
+   ROOT::Internal::RClusterPool fClusterPool;
    /// Pages that are unzipped with IMT are staged into the page pool
    ROOT::Internal::RPagePool fPagePool;
 
@@ -757,7 +765,7 @@ public:
    /// The underlying `std::shared_mutex`, however, is neither read nor write recursive:
    /// within one thread, only one lock (shared or exclusive) must be acquired at the same time. This requires special
    /// care in sections protected by `GetSharedDescriptorGuard()` and `GetExclDescriptorGuard()` especially to avoid
-   /// that the locks are acquired indirectly (e.g. by a call to `GetNEntries()`). As a general guideline, no other
+   /// that the locks are acquired indirectly. As a general guideline, no other
    /// method of the page source should be called (directly or indirectly) in a guarded section.
    const RSharedDescriptorGuard GetSharedDescriptorGuard() const
    {
@@ -814,6 +822,12 @@ public:
    /// actual implementation will only run if a task scheduler is set. In practice, a task scheduler is set
    /// if implicit multi-threading is turned on.
    void UnzipCluster(ROOT::Internal::RCluster *cluster);
+
+   /// Instructs the cluster pool and page pool to consider the given cluster as active (should stay cached).
+   void PinCluster(ROOT::DescriptorId_t clusterId) { fPinnedClusters.insert(clusterId); }
+   /// Allows the given cluster to be evicted from the cluster pool and page pool.
+   void UnpinCluster(ROOT::DescriptorId_t clusterId) { fPinnedClusters.erase(clusterId); }
+   const std::unordered_set<ROOT::DescriptorId_t> &GetPinnedClusters() const { return fPinnedClusters; }
 
    // TODO(gparolini): for symmetry with SealPage(), we should either make this private or SealPage() public.
    RResult<ROOT::Internal::RPage>

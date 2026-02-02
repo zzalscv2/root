@@ -14,6 +14,8 @@
 #ifndef RooFit_Detail_MathFuncs_h
 #define RooFit_Detail_MathFuncs_h
 
+#include <ROOT/RConfig.hxx> // for R__HAS_CLAD
+
 #include <TMath.h>
 #include <Math/PdfFuncMathCore.h>
 #include <Math/ProbFuncMathCore.h>
@@ -177,6 +179,9 @@ template <typename DoubleArray>
 double constraintSum(DoubleArray comp, unsigned int compSize)
 {
    double sum = 0;
+#if defined(__CLING__) && defined(R__HAS_CLAD)
+#pragma clad checkpoint loop
+#endif
    for (unsigned int i = 0; i < compSize; i++) {
       sum -= std::log(comp[i]);
    }
@@ -364,6 +369,9 @@ double flexibleInterp(unsigned int code, ParamsArray params, unsigned int n, Dou
                       double boundary, double nominal, int doCutoff)
 {
    double total = nominal;
+#if defined(__CLING__) && defined(R__HAS_CLAD)
+#pragma clad checkpoint loop
+#endif
    for (std::size_t i = 0; i < n; ++i) {
       total += flexibleInterpSingle(code, low[i], high[i], boundary, nominal, params[i], total);
    }
@@ -781,8 +789,8 @@ double bernsteinIntegral(double xlo, double xhi, double xmin, double xmax, Doubl
    return norm * (xmax - xmin);
 }
 
-template <typename DoubleArray>
-double multiVarGaussian(int n, DoubleArray x, DoubleArray mu, DoubleArray covI)
+template <typename XArray, typename MuArray, typename CovArray>
+double multiVarGaussian(int n, XArray x, MuArray mu, CovArray covI)
 {
    double result = 0.0;
 

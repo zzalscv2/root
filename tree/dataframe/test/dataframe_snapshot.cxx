@@ -447,6 +447,18 @@ TEST_F(RDFSnapshot, Snapshot_action_with_options)
    test_snapshot_options(tdf);
 }
 
+TEST_F(RDFSnapshot, Snapshot_action_warn_on_rntuple_specific_opts)
+{
+   RSnapshotOptions opts;
+   opts.fApproxZippedClusterSize = 64;
+
+   ROOT_EXPECT_WARNING(
+      tdf.Snapshot("ntuple", "snapshot_test_warn_on_rntuple_specific_opts.root", "", opts), "Snapshot",
+      "The RNTuple-specific fApproxZippedClusterSize option in RSnapshotOptions has been set, but the output format is "
+      "set to TTree, so this option won't have any effect. Use the other options available in RSnapshotOptions to "
+      "configure the output TTree. Alternatively, change fOutputFormat to snapshot to RNTuple instead.");
+}
+
 void checkSnapshotArrayFile(RResultPtr<RInterface<RLoopManager>> &df, unsigned int kNEvents)
 {
    // fixedSizeArr and varSizeArr are RResultPtr<vector<vector<T>>>
@@ -936,13 +948,13 @@ TEST(RDFSnapshotMore, LazyNotTriggered)
                        "storing its result in a variable and for example calling the GetValue() method on it.");
 }
 
-RResultPtr<RInterface<RLoopManager, void>> ReturnLazySnapshot(const char *fname)
+RResultPtr<RInterface<RLoopManager>> ReturnLazySnapshot(const char *fname)
 {
    auto d = ROOT::RDataFrame(1);
    ROOT::RDF::RSnapshotOptions opts;
    opts.fLazy = true;
    auto res = d.Snapshot("t", fname, {"rdfentry_"}, opts);
-   RResultPtr<RInterface<RLoopManager, void>> res2 = res;
+   RResultPtr<RInterface<RLoopManager>> res2 = res;
    return res;
 }
 

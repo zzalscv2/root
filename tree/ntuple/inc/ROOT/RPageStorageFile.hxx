@@ -35,8 +35,11 @@ namespace ROOT {
 class RNTuple; // for making RPageSourceFile a friend of RNTuple
 class RNTupleLocator;
 
+namespace Experimental {
+class RFile;
+}
+
 namespace Internal {
-class RClusterPool;
 class RRawFile;
 class RPageAllocatorHeap;
 
@@ -65,6 +68,10 @@ private:
    std::unique_ptr<ROOT::Internal::RNTupleFileWriter> fWriter;
    /// Number of bytes committed to storage in the current cluster
    std::uint64_t fNBytesCurrentCluster = 0;
+   /// On UpdateSchema(), the new class fields register the corresponding streamer info here so that the
+   /// streamer info records in the file can be properly updated on dataset commit
+   ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fInfosOfClassFields;
+
    RPageSinkFile(std::string_view ntupleName, const ROOT::RNTupleWriteOptions &options);
 
    /// We pass bytesPacked so that TFile::ls() reports a reasonable value for the compression ratio of the corresponding
@@ -93,11 +100,15 @@ protected:
 public:
    RPageSinkFile(std::string_view ntupleName, std::string_view path, const ROOT::RNTupleWriteOptions &options);
    RPageSinkFile(std::string_view ntupleName, TDirectory &fileOrDirectory, const ROOT::RNTupleWriteOptions &options);
+   RPageSinkFile(std::string_view ntupleName, ROOT::Experimental::RFile &file, std::string_view ntupleDir,
+                 const ROOT::RNTupleWriteOptions &options);
    RPageSinkFile(const RPageSinkFile &) = delete;
    RPageSinkFile &operator=(const RPageSinkFile &) = delete;
    RPageSinkFile(RPageSinkFile &&) = default;
    RPageSinkFile &operator=(RPageSinkFile &&) = default;
    ~RPageSinkFile() override;
+
+   void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset, ROOT::NTupleSize_t firstEntry) final;
 }; // class RPageSinkFile
 
 // clang-format off
@@ -135,8 +146,6 @@ private:
    ROOT::Internal::RMiniFileReader fReader;
    /// The descriptor is created from the header and footer either in AttachImpl or in CreateFromAnchor
    RNTupleDescriptorBuilder fDescriptorBuilder;
-   /// The cluster pool asynchronously preloads the next few clusters
-   std::unique_ptr<ROOT::Internal::RClusterPool> fClusterPool;
    /// Populated by LoadStructureImpl(), reset at the end of Attach()
    RStructureBuffer fStructureBuffer;
 
@@ -172,6 +181,11 @@ public:
    RPageSourceFile(RPageSourceFile &&) = delete;
    RPageSourceFile &operator=(RPageSourceFile &&) = delete;
    ~RPageSourceFile() override;
+
+   /// Creates a new PageSourceFile using the same underlying file as this but referring to a different RNTuple,
+   /// represented by `anchor`.
+   std::unique_ptr<RPageSourceFile>
+   OpenWithDifferentAnchor(const RNTuple &anchor, const ROOT::RNTupleReadOptions &options = ROOT::RNTupleReadOptions());
 
    void
    LoadSealedPage(ROOT::DescriptorId_t physicalColumnId, RNTupleLocalIndex localIndex, RSealedPage &sealedPage) final;

@@ -5,16 +5,19 @@
 #ifndef ROOT_RAxes
 #define ROOT_RAxes
 
+#include "RAxisVariant.hxx"
 #include "RBinIndex.hxx"
+#include "RCategoricalAxis.hxx"
 #include "RLinearizedIndex.hxx"
 #include "RRegularAxis.hxx"
 #include "RVariableBinAxis.hxx"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -23,9 +26,6 @@ class TBuffer;
 
 namespace ROOT {
 namespace Experimental {
-
-/// Variant of all supported axis types.
-using RAxisVariant = std::variant<RRegularAxis, RVariableBinAxis>;
 
 // forward declaration for friend declaration
 template <typename T>
@@ -62,17 +62,11 @@ public:
    /// It is the product of each dimension's total number of bins.
    ///
    /// \return the total number of bins
-   std::size_t ComputeTotalNBins() const
+   std::uint64_t ComputeTotalNBins() const
    {
-      std::size_t totalNBins = 1;
+      std::uint64_t totalNBins = 1;
       for (auto &&axis : fAxes) {
-         if (auto *regular = std::get_if<RRegularAxis>(&axis)) {
-            totalNBins *= regular->GetTotalNBins();
-         } else if (auto *variable = std::get_if<RVariableBinAxis>(&axis)) {
-            totalNBins *= variable->GetTotalNBins();
-         } else {
-            throw std::logic_error("unimplemented axis type"); // GCOVR_EXCL_LINE
-         }
+         totalNBins *= axis.GetTotalNBins();
       }
       return totalNBins;
    }
@@ -81,14 +75,30 @@ private:
    template <std::size_t I, std::size_t N, typename... A>
    RLinearizedIndex ComputeGlobalIndexImpl(std::size_t index, const std::tuple<A...> &args) const
    {
+      using ArgumentType = std::tuple_element_t<I, std::tuple<A...>>;
       const auto &axis = fAxes[I];
       RLinearizedIndex linIndex;
-      if (auto *regular = std::get_if<RRegularAxis>(&axis)) {
-         index *= regular->GetTotalNBins();
-         linIndex = regular->ComputeLinearizedIndex(std::get<I>(args));
-      } else if (auto *variable = std::get_if<RVariableBinAxis>(&axis)) {
-         index *= variable->GetTotalNBins();
-         linIndex = variable->ComputeLinearizedIndex(std::get<I>(args));
+      if (auto *regular = axis.GetRegularAxis()) {
+         if constexpr (std::is_convertible_v<ArgumentType, RRegularAxis::ArgumentType>) {
+            index *= regular->GetTotalNBins();
+            linIndex = regular->ComputeLinearizedIndex(std::get<I>(args));
+         } else {
+            throw std::invalid_argument("invalid type of argument");
+         }
+      } else if (auto *variable = axis.GetVariableBinAxis()) {
+         if constexpr (std::is_convertible_v<ArgumentType, RVariableBinAxis::ArgumentType>) {
+            index *= variable->GetTotalNBins();
+            linIndex = variable->ComputeLinearizedIndex(std::get<I>(args));
+         } else {
+            throw std::invalid_argument("invalid type of argument");
+         }
+      } else if (auto *categorical = axis.GetCategoricalAxis()) {
+         if constexpr (std::is_convertible_v<ArgumentType, RCategoricalAxis::ArgumentType>) {
+            index *= categorical->GetTotalNBins();
+            linIndex = categorical->ComputeLinearizedIndex(std::get<I>(args));
+         } else {
+            throw std::invalid_argument("invalid type of argument");
+         }
       } else {
          throw std::logic_error("unimplemented axis type"); // GCOVR_EXCL_LINE
       }
@@ -111,6 +121,9 @@ private:
 public:
    /// Compute the global index for all axes.
    ///
+   /// Throws an exception if the number of arguments does not match the axis configuration, or if an argument cannot be
+   /// converted for the axis type at run-time.
+   ///
    /// \param[in] args the arguments
    /// \return the global index that may be invalid
    template <typename... A>
@@ -132,17 +145,20 @@ public:
       if (N != fAxes.size()) {
          throw std::invalid_argument("invalid number of indices passed to ComputeGlobalIndex");
       }
-      std::size_t globalIndex = 0;
+      std::uint64_t globalIndex = 0;
       for (std::size_t i = 0; i < N; i++) {
          const auto &index = indices[i];
          const auto &axis = fAxes[i];
          RLinearizedIndex linIndex;
-         if (auto *regular = std::get_if<RRegularAxis>(&axis)) {
+         if (auto *regular = axis.GetRegularAxis()) {
             globalIndex *= regular->GetTotalNBins();
             linIndex = regular->GetLinearizedIndex(index);
-         } else if (auto *variable = std::get_if<RVariableBinAxis>(&axis)) {
+         } else if (auto *variable = axis.GetVariableBinAxis()) {
             globalIndex *= variable->GetTotalNBins();
             linIndex = variable->GetLinearizedIndex(index);
+         } else if (auto *categorical = axis.GetCategoricalAxis()) {
+            globalIndex *= categorical->GetTotalNBins();
+            linIndex = categorical->GetLinearizedIndex(index);
          } else {
             throw std::logic_error("unimplemented axis type"); // GCOVR_EXCL_LINE
          }

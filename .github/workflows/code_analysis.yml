@@ -54,21 +54,23 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
 
     - name: Get the list of changed files
       id: diff
       run: |
-        git fetch --depth=1 origin $GITHUB_BASE_REF 
-        git diff --diff-filter=AMR --name-only origin/$GITHUB_BASE_REF > changed_files.txt
+        git diff --diff-filter=AMR --name-only HEAD~1 | tee changed_files.txt
 
     - name: Install ruff
       uses: astral-sh/ruff-action@v3
       with:
+        version: "latest"
         args: "--version"
 
     - name: Lint code
       run: |
-        files=$(cat changed_files.txt | grep '\.py$' || echo "")
+        files=$(grep '\.py$' changed_files.txt || echo "")
         if [ -n "$files" ]; then
           echo "$files" | xargs ruff check --diff || true
           echo "$files" | xargs ruff check
@@ -79,7 +81,7 @@ jobs:
     - name: Format code
       if: always()
       run: |
-        files=$(cat changed_files.txt | grep '\.py$' || echo "")
+        files=$(grep '\.py$' changed_files.txt || echo "")
         if [ -n "$files" ]; then
           diff_command=""
           apply_command=""

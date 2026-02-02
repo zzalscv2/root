@@ -11,6 +11,8 @@
 #include <random>
 #include <vector>
 
+#include "ROOT/TestSupport.hxx"
+
 // StatOverflows TH1
 TEST(TH1, StatOverflows)
 {
@@ -311,4 +313,23 @@ TEST(TH1, SetBufferedSumw2)
 
    EXPECT_FLOAT_EQ(h1.GetBinContent(1), Entries * Weight);
    EXPECT_FLOAT_EQ(h1.GetBinError(1), std::sqrt(Entries * Weight * Weight));
+}
+
+// https://github.com/root-project/root/issues/20185
+TEST(TAxis, EqualBinEdges)
+{
+   ROOT_EXPECT_ERROR(TAxis _({1, 1}), "TAxis::Set", "bin edges must be in increasing order");
+   ROOT_EXPECT_ERROR(TAxis _(1, -std::numeric_limits<double>::infinity(), 0), "TAxis::Set", "Axis limits need to be finite numbers");
+   ROOT_EXPECT_ERROR(TAxis _(1, 0., std::numeric_limits<double>::infinity()), "TAxis::Set", "Axis limits need to be finite numbers");
+   ROOT_EXPECT_ERROR(TAxis _(1, std::numeric_limits<double>::quiet_NaN(), 0), "TAxis::Set", "Axis limits need to be finite numbers");
+   ROOT_EXPECT_ERROR(TAxis _(1, 0, std::numeric_limits<double>::quiet_NaN()), "TAxis::Set", "Axis limits need to be finite numbers");
+}
+
+TEST(TH1L, SetBinContent)
+{
+   TH1L h("", "", 1, 0, 1);
+   // Something that does not fit into Int_t, but is exactly representable in Double_t
+   static constexpr long long Large = 1LL << 42;
+   h.SetBinContent(1, Large);
+   EXPECT_EQ(h.GetBinContent(1), Large);
 }

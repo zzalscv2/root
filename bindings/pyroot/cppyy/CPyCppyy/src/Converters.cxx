@@ -16,6 +16,7 @@
 #include "Utility.h"
 
 // Standard
+#include <cassert>
 #include <complex>
 #include <limits.h>
 #include <stddef.h>      // for ptrdiff_t
@@ -2502,7 +2503,7 @@ bool CPyCppyy::InstanceArrayConverter::ToMemory(
 }
 
 //___________________________________________________________________________
-// CLING WORKAROUND -- classes for STL iterators are completely undefined in that
+// Cling WORKAROUND -- classes for STL iterators are completely undefined in that
 // they come in a bazillion different guises, so just do whatever
 bool CPyCppyy::STLIteratorConverter::SetArg(
     PyObject* pyobject, Parameter& para, CallContext* /* ctxt */)
@@ -2516,7 +2517,7 @@ bool CPyCppyy::STLIteratorConverter::SetArg(
     para.fTypeCode = 'V';
     return true;
 }
-// -- END CLING WORKAROUND
+// -- END Cling WORKAROUND
 
 //----------------------------------------------------------------------------
 bool CPyCppyy::VoidPtrRefConverter::SetArg(
@@ -2655,7 +2656,7 @@ static PyMethodDef gWrapperCacheEraserMethodDef = {
 };
 
 static void* PyFunction_AsCPointer(PyObject* pyobject,
-    const std::string& rettype, const std::string& signature)
+    const std::string& rettype, const std::string& signature, bool allowCppInstance)
 {
 // Convert a bound C++ function pointer or callable python object to a C-style
 // function pointer. The former is direct, the latter involves a JIT-ed wrapper.
@@ -2702,8 +2703,12 @@ static void* PyFunction_AsCPointer(PyObject* pyobject,
         return fptr;
     }
 
-    if (PyCallable_Check(pyobject)) {
+
+    if (PyCallable_Check(pyobject) && (allowCppInstance || !CPPInstance_Check(pyobject))) {
     // generic python callable: create a C++ wrapper function
+    // Sometimes we don't want to take this branch if the object is a C++
+    // instance, because C++ doesn't allow converting functor objects to
+    // function pointers, but only to std::function.
         void* wpraddress = nullptr;
 
     // re-use existing wrapper if possible
@@ -2808,7 +2813,7 @@ bool CPyCppyy::FunctionPointerConverter::SetArg(
     }
 
 // normal case, get a function pointer
-    void* fptr = PyFunction_AsCPointer(pyobject, fRetType, fSignature);
+    void* fptr = PyFunction_AsCPointer(pyobject, fRetType, fSignature, fAllowCppInstance);
     if (fptr) {
         SetLifeLine(ctxt->fPyContext, pyobject, (intptr_t)this);
         para.fValue.fVoidp = fptr;
@@ -2840,7 +2845,7 @@ bool CPyCppyy::FunctionPointerConverter::ToMemory(
     }
 
 // normal case, get a function pointer
-    void* fptr = PyFunction_AsCPointer(pyobject, fRetType, fSignature);
+    void* fptr = PyFunction_AsCPointer(pyobject, fRetType, fSignature, fAllowCppInstance);
     if (fptr) {
         SetLifeLine(ctxt, pyobject, (intptr_t)address);
         *((void**)address) = fptr;
@@ -3107,7 +3112,13 @@ bool CPyCppyy::InitializerListConverter::SetArg(
     // so either.
         PyErr_Clear();
 
-    // can only construct empty lists, so use a fake initializer list
+    // Can only construct empty lists, so use a fake initializer list. For that we
+    // need to construct default objects. Fail early if that cannot work.
+        if (fValueType && !Cppyy::IsDefaultConstructable(fValueType)) {
+            PyErr_SetString(PyExc_TypeError, "default constructor needed for initializer list of objects");
+            return false;
+        }
+
         size_t len = (size_t)PySequence_Size(pyobject);
         fake = (faux_initlist*)malloc(sizeof(faux_initlist)+fValueSize*len);
         fBuffer = (void*)fake;
@@ -3138,11 +3149,9 @@ bool CPyCppyy::InitializerListConverter::SetArg(
                     // clunky, but the use of a copy constructor isn't much better as the Python object
                     // need not be a C++ object
                         memloc = (void*)Cppyy::Construct(fValueType, memloc);
-                        if (memloc) entries += 1;
-                        else {
-                           PyErr_SetString(PyExc_TypeError,
-                              "default ctor needed for initializer list of objects");
-                        }
+                    // We checked above that we are able to construct default objects of fValueType.
+                        assert(memloc);
+                        entries += 1;
                     }
                     if (memloc) {
                         if (i >= fConverters.size()) {
@@ -3348,12 +3357,12 @@ CPyCppyy::Converter* CPyCppyy::CreateConverter(const std::string& fullType, cdim
         }
 
         if (!result) {
-        // CLING WORKAROUND -- special case for STL iterators
+        // Cling WORKAROUND -- special case for STL iterators
             if (Utility::IsSTLIterator(realType)) {
                 static STLIteratorConverter c;
                 result = &c;
             } else
-       // -- CLING WORKAROUND
+       // -- Cling WORKAROUND
                 result = selectInstanceCnv(klass, cpd, dims, isConst, control);
         }
     } else {
@@ -3613,6 +3622,19 @@ public:
         gf["const " CCOMPLEX_D "&"] =       gf["const std::complex<double>&"];
         gf[CCOMPLEX_F " ptr"] =             gf["std::complex<float> ptr"];
         gf[CCOMPLEX_D " ptr"] =             gf["std::complex<double> ptr"];
+
+        // We always need these converters when cppyy is based on an unpatched
+        // ROOT, because the "long long" types are always converted to Long64_t
+        // and ULong64_t already at the ROOT Meta level.
+        // See https://github.com/root-project/root/issues/15872#issuecomment-2174092763
+        gf["Long64_t"] =                    gf["long long"];
+        gf["Long64_t ptr"] =                gf["long long ptr"];
+        gf["Long64_t&"] =                   gf["long long&"];
+        gf["const Long64_t&"] =             gf["const long long&"];
+        gf["ULong64_t"] =                   gf["unsigned long long"];
+        gf["ULong64_t ptr"] =               gf["unsigned long long ptr"];
+        gf["ULong64_t&"] =                  gf["unsigned long long&"];
+        gf["const ULong64_t&"] =            gf["const unsigned long long&"];
 
     // factories for special cases
         gf["nullptr_t"] =                   (cf_t)+[](cdims_t) { static NullptrConverter c{};        return &c;};

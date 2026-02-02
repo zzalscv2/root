@@ -8,7 +8,6 @@
 // need to add include path to find generated model file
 #ifdef __CLING__
 R__ADD_INCLUDE_PATH($PWD)
-R__ADD_INCLUDE_PATH($ROOTSYS/runtutorials)
 #endif
 
 #include "encoder.hxx"
@@ -234,10 +233,3 @@ void TMVA_SOFIE_GNN_Application (bool verbose = false)
    c2->cd(3); o3->Draw();
 
 }
-
-int main () {
-
-   TMVA_SOFIE_GNN_Application();
-}
-
-

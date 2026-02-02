@@ -1,4 +1,4 @@
-if(ROOT_pyroot_FOUND)
+if(pyroot)
 if(NOT MSVC OR win_broken_tests)
   ROOTTEST_ADD_TEST(cpp
                     MACRO PyROOT_cpptests.py
@@ -13,10 +13,4 @@ if(NOT MSVC OR win_broken_tests)
                     PRECMD ${ROOT_root_CMD} -b -q -l -e .L\ AdvancedCpp.C+
                                                      -e .L\ Template.C+)
 endif()
-
-  ROOTTEST_ADD_TEST(cpp11
-                    MACRO PyROOT_cpp11tests.py
-                    COPY_TO_BUILDDIR Cpp11Features.C
-                    PRECMD ${ROOT_root_CMD} -b -q -l -e .L\ Cpp11Features.C+)
-
 endif()

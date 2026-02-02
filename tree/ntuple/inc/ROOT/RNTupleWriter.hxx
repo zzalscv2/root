@@ -37,6 +37,22 @@ namespace ROOT {
 
 class RNTupleWriteOptions;
 
+namespace Experimental {
+class RFile;
+
+/// Creates an RNTupleWriter that writes into the given `file`, appending to it. The RNTuple is written under the
+/// path `ntuplePath`.
+/// `ntuplePath` may have the form `"path/to/ntuple"`, in which case the ntuple's name will be `"ntuple"` and it will
+/// be stored under the given `ntuplePath` in the RFile.
+/// Throws an exception if the model is null.
+/// NOTE: this is a temporary, experimental API that will be replaced by an overload of RNTupleWriter::Append in the
+/// future.
+std::unique_ptr<RNTupleWriter>
+RNTupleWriter_Append(std::unique_ptr<ROOT::RNTupleModel> model, std::string_view ntuplePath,
+                     ROOT::Experimental::RFile &file,
+                     const ROOT::RNTupleWriteOptions &options = ROOT::RNTupleWriteOptions());
+} // namespace Experimental
+
 namespace Internal {
 // Non-public factory method for an RNTuple writer that uses an already constructed page sink
 std::unique_ptr<RNTupleWriter>
@@ -71,7 +87,7 @@ auto model = ROOT::RNTupleModel::Create();
 auto pFoo = model->MakeField<int>("foo");
 
 /// 2. Create writer from the model.
-auto writer = ROOT::RNTupleReader::Recreate(std::move(model), "myNTuple", "some/file.root");
+auto writer = ROOT::RNTupleWriter::Recreate(std::move(model), "myNTuple", "some/file.root");
 
 /// 3. Write into it.
 for (int i = 0; i < 10; ++i) {
@@ -102,6 +118,9 @@ class RNTupleWriter {
    friend ROOT::RNTupleModel::RUpdater;
    friend std::unique_ptr<RNTupleWriter>
       Internal::CreateRNTupleWriter(std::unique_ptr<ROOT::RNTupleModel>, std::unique_ptr<Internal::RPageSink>);
+   friend std::unique_ptr<RNTupleWriter>
+   Experimental::RNTupleWriter_Append(std::unique_ptr<ROOT::RNTupleModel> model, std::string_view ntuplePath,
+                                      ROOT::Experimental::RFile &file, const ROOT::RNTupleWriteOptions &options);
 
 private:
    RNTupleFillContext fFillContext;
@@ -146,13 +165,17 @@ public:
             std::string_view storage, const ROOT::RNTupleWriteOptions &options = ROOT::RNTupleWriteOptions());
 
    /// Creates an RNTupleWriter that writes into an existing TFile or TDirectory, without overwriting its content.
-   /// `fileOrDirectory` may be an empty TFile.
+   /// `fileOrDirectory` may be an empty TFile and its reference **must remain valid** for the lifetime of the
+   /// RNTupleWriter (which means the TDirectory object must not be moved, destroyed or replaced during that time).
    /// \see Recreate()
    static std::unique_ptr<RNTupleWriter> Append(std::unique_ptr<ROOT::RNTupleModel> model, std::string_view ntupleName,
                                                 TDirectory &fileOrDirectory,
                                                 const ROOT::RNTupleWriteOptions &options = ROOT::RNTupleWriteOptions());
+
    RNTupleWriter(const RNTupleWriter &) = delete;
    RNTupleWriter &operator=(const RNTupleWriter &) = delete;
+   RNTupleWriter(RNTupleWriter &&) = delete;
+   RNTupleWriter &operator=(RNTupleWriter &&) = delete;
    ~RNTupleWriter();
 
    /// The simplest user interface if the default entry that comes with the ntuple model is used.
@@ -169,10 +192,10 @@ public:
    /// Fill an RRawPtrWriteEntry into this ntuple.  This method will check the entry's model ID to ensure it comes from
    /// the writer's own model or throw an exception otherwise.
    /// \return The number of uncompressed bytes written.
-   std::size_t Fill(Experimental::Detail::RRawPtrWriteEntry &entry) { return fFillContext.Fill(entry); }
+   std::size_t Fill(ROOT::Detail::RRawPtrWriteEntry &entry) { return fFillContext.Fill(entry); }
    /// Fill an RRawPtrWriteEntry into this ntuple, but don't commit the cluster. The calling code must pass an
    /// RNTupleFillStatus and check RNTupleFillStatus::ShouldFlushCluster.
-   void FillNoFlush(Experimental::Detail::RRawPtrWriteEntry &entry, RNTupleFillStatus &status)
+   void FillNoFlush(ROOT::Detail::RRawPtrWriteEntry &entry, RNTupleFillStatus &status)
    {
       fFillContext.FillNoFlush(entry, status);
    }
@@ -195,7 +218,7 @@ public:
    void CommitDataset();
 
    std::unique_ptr<ROOT::REntry> CreateEntry() const { return fFillContext.CreateEntry(); }
-   std::unique_ptr<Experimental::Detail::RRawPtrWriteEntry> CreateRawPtrWriteEntry() const
+   std::unique_ptr<ROOT::Detail::RRawPtrWriteEntry> CreateRawPtrWriteEntry() const
    {
       return fFillContext.CreateRawPtrWriteEntry();
    }

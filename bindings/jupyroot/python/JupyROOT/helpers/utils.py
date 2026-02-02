@@ -62,7 +62,7 @@ _jsCode = """
             Core.draw('{jsDivId}', obj, '{jsDrawOptions}');
          }});
       }}
-      const servers = ['/static/', 'https://jsroot.gsi.de/dev/', 'https://root.cern/js/dev/'],
+      const servers = ['/static/', 'https://root.cern/js/7.10.0/', 'https://jsroot.gsi.de/7.10.0/'],
             path = 'build/jsroot';
       if (typeof JSROOT !== 'undefined')
          drawPlot(JSROOT);
@@ -89,16 +89,20 @@ TBufferJSONErrorMessage = "The TBufferJSON class is necessary for JS visualisati
 
 
 def TBufferJSONAvailable():
-    if hasattr(ROOT, "TBufferJSON"):
-        return True
-    print(TBufferJSONErrorMessage, file=sys.stderr)
-    return False
+    if not hasattr(ROOT, "TBufferJSON"):
+        return False
+    if not hasattr(ROOT.TBufferJSON, "ConvertToJSON"):
+        print(TBufferJSONErrorMessage, file=sys.stderr)
+        return False
+    return True
 
 
 def TWebCanvasAvailable():
-    if hasattr(ROOT, "TWebCanvas"):
-        return True
-    return False
+    if not hasattr(ROOT, "TWebCanvas"):
+        return False
+    if not hasattr(ROOT.TWebCanvas, "CreateCanvasJSON"):
+        return False
+    return True
 
 
 def RCanvasAvailable():

@@ -100,7 +100,7 @@ private:
    std::size_t FillImpl(Entry &entry)
    {
       ROOT::RNTupleFillStatus status;
-      FillNoFlush(entry, status);
+      FillNoFlushImpl(entry, status);
       if (status.ShouldFlushCluster())
          FlushCluster();
       return status.GetLastEntrySize();
@@ -109,6 +109,8 @@ private:
    RNTupleFillContext(std::unique_ptr<ROOT::RNTupleModel> model, std::unique_ptr<ROOT::Internal::RPageSink> sink);
    RNTupleFillContext(const RNTupleFillContext &) = delete;
    RNTupleFillContext &operator=(const RNTupleFillContext &) = delete;
+   RNTupleFillContext(RNTupleFillContext &&) = delete;
+   RNTupleFillContext &operator=(RNTupleFillContext &&) = delete;
 
 public:
    ~RNTupleFillContext();
@@ -129,14 +131,14 @@ public:
    ///
    /// This method will check the entry's model ID to ensure it comes from the context's own model or throw an exception
    /// otherwise.
-   void FillNoFlush(Experimental::Detail::RRawPtrWriteEntry &entry, ROOT::RNTupleFillStatus &status)
+   void FillNoFlush(ROOT::Detail::RRawPtrWriteEntry &entry, ROOT::RNTupleFillStatus &status)
    {
       FillNoFlushImpl(entry, status);
    }
    /// Fill an RRawPtrWriteEntry into this context.  This method will check the entry's model ID to ensure it comes
    /// from the context's own model or throw an exception otherwise.
    /// \return The number of uncompressed bytes written.
-   std::size_t Fill(Experimental::Detail::RRawPtrWriteEntry &entry) { return FillImpl(entry); }
+   std::size_t Fill(ROOT::Detail::RRawPtrWriteEntry &entry) { return FillImpl(entry); }
 
    /// Flush column data, preparing for CommitCluster or to reduce memory usage. This will trigger compression of pages,
    /// but not actually write to storage.
@@ -148,7 +150,7 @@ public:
 
    const ROOT::RNTupleModel &GetModel() const { return *fModel; }
    std::unique_ptr<ROOT::REntry> CreateEntry() const { return fModel->CreateEntry(); }
-   std::unique_ptr<Experimental::Detail::RRawPtrWriteEntry> CreateRawPtrWriteEntry() const
+   std::unique_ptr<ROOT::Detail::RRawPtrWriteEntry> CreateRawPtrWriteEntry() const
    {
       return fModel->CreateRawPtrWriteEntry();
    }

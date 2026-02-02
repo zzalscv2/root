@@ -1959,7 +1959,7 @@ function _lineErrToolTip(intersect) {
    const pos = Math.floor(intersect.index / 6);
    if ((pos < 0) || (pos >= this.intersect_index.length))
       return null;
-   const p = this.painter,
+   const p = this.tip_painter,
          histo = p.getHisto(),
          fp = p.getFramePainter(),
          tip = p.get3DToolTip(this.intersect_index[pos]),
@@ -2064,7 +2064,7 @@ function drawBinsError3D(painter, is_v7 = false) {
          material = new THREE.LineBasicMaterial(getMaterialArgs(lcolor, { linewidth: is_v7 ? painter.v7EvalAttr('line_width', 1) : histo.fLineWidth })),
          line = createLineSegments(lpos, material);
 
-   line.painter = painter;
+   line.tip_painter = painter;
    line.intersect_index = binindx;
    line.zmin = zmin;
    line.zmax = zmax;
@@ -2257,7 +2257,8 @@ function drawBinsSurf3D(painter, is_v7 = false) {
             color = indx > 1 ? painter.getColor(indx) : 'white';
       }
 
-      if (!color) color = 'white';
+      if (!color)
+         color = 'white';
       if (painter.options.Surf === 14)
          material = new THREE.MeshLambertMaterial(getMaterialArgs(color, { side: THREE.DoubleSide, vertexColors: false }));
       else

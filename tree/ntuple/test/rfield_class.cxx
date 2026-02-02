@@ -1,12 +1,18 @@
 #include "ntuple_test.hxx"
+#include "SimpleCollectionProxy.hxx"
 
 #include <TMath.h>
 #include <TObject.h>
 #include <TRef.h>
 #include <TRotation.h>
+#include <TVirtualStreamerInfo.h>
 
 #include <memory>
 #include <sstream>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace {
 class RNoDictionary {};
@@ -343,4 +349,120 @@ TEST(RNTuple, TClassInnerReadRule)
    EXPECT_FLOAT_EQ(4., f->at(0).fHelicity);
    reader->LoadEntry(1);
    EXPECT_TRUE(f->empty());
+}
+
+TEST(RNTuple, PolymorphicPointer)
+{
+   FileRaii fileGuard("test_ntuple_polymorphic_pointer.root");
+
+   {
+      auto model = RNTupleModel::Create();
+      auto ptr = model->MakeField<std::unique_ptr<PolymorphicBase>>("ptr");
+      auto writer = RNTupleWriter::Recreate(std::move(model), "ntpl", fileGuard.GetPath());
+      ptr->reset(new PolymorphicBase);
+      writer->Fill();
+      ptr->reset(new PolymorphicDerived);
+      EXPECT_THROW(writer->Fill(), ROOT::RException);
+   }
+
+   {
+      auto model = RNTupleModel::Create();
+      auto ptrField = RFieldBase::Create("ptr", "std::unique_ptr<PolymorphicBase>").Unwrap();
+      model->AddField(std::move(ptrField));
+      auto ptr = model->GetDefaultEntry().GetPtr<std::unique_ptr<PolymorphicBase>>("ptr");
+      auto writer = RNTupleWriter::Recreate(std::move(model), "ntpl", fileGuard.GetPath());
+      ptr->reset(new PolymorphicBase);
+      writer->Fill();
+      ptr->reset(new PolymorphicDerived);
+      EXPECT_THROW(writer->Fill(), ROOT::RException);
+   }
+}
+
+TEST(RNTuple, TClassMetaName)
+{
+   auto f1 = ROOT::RClassField("f", "EdmWrapper<long long>");
+   EXPECT_STREQ("EdmWrapper<Long64_t>", f1.GetClass()->GetName());
+
+   auto f2 = std::make_unique<ROOT::RField<EdmWrapper<long long>>>("f");
+   EXPECT_STREQ("EdmWrapper<Long64_t>", static_cast<ROOT::RClassField *>(f2.get())->GetClass()->GetName());
+
+   auto f3 = RFieldBase::Create("f", "EdmWrapper<long long>").Unwrap();
+   EXPECT_STREQ("EdmWrapper<Long64_t>", static_cast<ROOT::RClassField *>(f3.get())->GetClass()->GetName());
+
+   auto f4 = RFieldBase::Create("f", "EdmContainer").Unwrap();
+   EXPECT_STREQ("EdmWrapper<Long64_t>",
+                static_cast<const ROOT::RClassField *>(f4->GetConstSubfields()[0])->GetClass()->GetName());
+
+   SimpleCollectionProxy<StructUsingCollectionProxy<Long64_t>> proxy;
+   auto cl = TClass::GetClass("StructUsingCollectionProxy<Long64_t>");
+   cl->CopyCollectionProxy(proxy);
+
+   auto f5 = std::make_unique<ROOT::RField<StructUsingCollectionProxy<Long64_t>>>("f");
+   EXPECT_TRUE(dynamic_cast<ROOT::RProxiedCollectionField *>(f5.get()));
+   EXPECT_EQ("StructUsingCollectionProxy<Long64_t>", f5->GetTypeAlias());
+
+   ROOT::RStreamerField f6("f", "EdmWrapper<long long>");
+   EXPECT_STREQ("EdmWrapper<Long64_t>", f6.GetClass()->GetName());
+   EXPECT_EQ("EdmWrapper<Long64_t>", f6.GetTypeAlias());
+}
+
+TEST(RNTuple, StreamerInfoRecords)
+{
+   // Every testee consists of the type stored on disk, the expected streamer info records, and the expected type alias
+   std::vector<std::tuple<std::string, std::vector<std::string>, std::string>> testees{
+      {"float", {}, ""},
+      {"std::vector<float>", {}, ""},
+      {"std::pair<float, float>", {}, ""},
+      {"std::map<int, float>", {}, ""},
+      {"CustomStruct", {"CustomStruct"}, ""},
+      {"std::vector<CustomStruct>", {"CustomStruct"}, ""},
+      {"std::map<int, CustomStruct>", {"CustomStruct"}, ""},
+      {"DerivedA", {"DerivedA", "CustomStruct"}, ""},
+      {"std::pair<CustomStruct, DerivedA>", {"DerivedA", "CustomStruct"}, ""},
+      {"std::vector<EdmWrapper<long long>>", {"EdmWrapper<Long64_t>"}, "std::vector<EdmWrapper<Long64_t>>"},
+      {"ROOT::RVec<EdmWrapper<long long>>", {"EdmWrapper<Long64_t>"}, "ROOT::VecOps::RVec<EdmWrapper<Long64_t>>"},
+      {"EdmWrapper<long long>", {"EdmWrapper<Long64_t>"}, "EdmWrapper<Long64_t>"},
+      {"EdmWrapper<map<int, EdmContent<float, Long64_t> > >",
+       {"EdmWrapper<map<int,EdmContent<float,Long64_t> > >", "EdmContent<float,Long64_t>"},
+       "EdmWrapper<std::map<std::int32_t,EdmContent<float,Long64_t>>>"},
+      {"EdmContainer", {"EdmContainer", "EdmWrapper<Long64_t>"}, ""},
+      {"EdmWrapper<long long>::Inner", {"EdmWrapper<Long64_t>::Inner"}, "EdmWrapper<Long64_t>::Inner"},
+      {"EdmContainer::EdmWrapperLong64_t", {"EdmWrapper<Long64_t>"}, "EdmContainer::EdmWrapperLong64_t"},
+      {"TRotation", {"TRotation"}, ""}};
+
+   for (const auto &t : testees) {
+      FileRaii fileGuard("test_ntuple_streamer_info_records.root");
+
+      {
+         auto model = ROOT::RNTupleModel::Create();
+         if (std::get<0>(t) == "TRotation") {
+            model->AddField(std::make_unique<ROOT::RStreamerField>("f", std::get<0>(t)));
+         } else {
+            model->AddField(ROOT::RFieldBase::Create("f", std::get<0>(t)).Unwrap());
+         }
+         auto writer = ROOT::RNTupleWriter::Recreate(std::move(model), "ntpl", fileGuard.GetPath());
+      }
+
+      auto f = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str()));
+      ASSERT_TRUE(f && !f->IsZombie());
+
+      std::unordered_set<std::string> expectedInfos{std::get<1>(t).begin(), std::get<1>(t).end()};
+      expectedInfos.insert("ROOT::RNTuple");
+      for (const auto info : TRangeDynCast<TVirtualStreamerInfo>(*f->GetStreamerInfoList())) {
+         auto itr = expectedInfos.find(info->GetName());
+         if (itr == expectedInfos.end()) {
+            FAIL() << "unexpected streamer info: " << info->GetName();
+            continue;
+         }
+         expectedInfos.erase(itr);
+      }
+      EXPECT_TRUE(expectedInfos.empty());
+
+      // Make sure we can reconstruct the fields
+      auto reader = RNTupleReader::Open("ntpl", fileGuard.GetPath());
+      EXPECT_EQ(std::get<2>(t), reader->GetModel().GetConstField("f").GetTypeAlias());
+      if (auto field = dynamic_cast<const ROOT::RClassField *>(&reader->GetModel().GetConstField("f"))) {
+         EXPECT_EQ(std::get<1>(t)[0], field->GetClass()->GetName());
+      }
+   }
 }
