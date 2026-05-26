@@ -16,7 +16,8 @@ if(dataframe)
         ROOT/_pythonization/_rdf_conversion_maps.py
         ROOT/_pythonization/_rdf_pyz.py
         ROOT/_pythonization/_rdisplay.py
-        ROOT/_pythonization/_rdf_namespace.py)
+        ROOT/_pythonization/_rdf_namespace.py
+        ROOT/_pythonization/_ml_dataloader.py)
 endif()
 
 if(roofit)
@@ -38,6 +39,7 @@ if(roofit)
         ROOT/_pythonization/_roofit/_roojsonfactorywstool.py
         ROOT/_pythonization/_roofit/_roomcstudy.py
         ROOT/_pythonization/_roofit/_roomsgservice.py
+        ROOT/_pythonization/_roofit/_rooplot.py
         ROOT/_pythonization/_roofit/_rooprodpdf.py
         ROOT/_pythonization/_roofit/_roorealvar.py
         ROOT/_pythonization/_roofit/_roosimultaneous.py
@@ -58,11 +60,30 @@ if(tmva)
         ROOT/_pythonization/_tmva/_rtensor.py
         ROOT/_pythonization/_tmva/_tree_inference.py
         ROOT/_pythonization/_tmva/_utils.py
-        ROOT/_pythonization/_tmva/_gnn.py)
-    if(dataframe)
-      list(APPEND PYROOT_EXTRA_PYTHON_SOURCES
-          ROOT/_pythonization/_tmva/_batchgenerator.py)
-    endif()
+        ROOT/_pythonization/_tmva/_gnn.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/__init__.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/parser.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/__init__.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/batchnorm.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/binary.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/concat.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/conv.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/dense.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/elu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/flatten.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/identity.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/layernorm.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/leaky_relu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/permute.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/pooling.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/reshape.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/relu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/rnn.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/selu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/sigmoid.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/softmax.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/swish.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/tanh.py)
 endif()
 
 set(py_sources
@@ -76,6 +97,24 @@ set(py_sources
   ROOT/_asan.py
   ROOT/_facade.py
   ROOT/__init__.py
+  ROOT/_jupyroot/__init__.py
+  ROOT/_jupyroot/helpers/__init__.py
+  ROOT/_jupyroot/helpers/cppcompleter.py
+  ROOT/_jupyroot/helpers/handlers.py
+  ROOT/_jupyroot/helpers/utils.py
+  ROOT/_jupyroot/html/__init__.py
+  ROOT/_jupyroot/html/cpphighlighter.py
+  ROOT/_jupyroot/kernel/__init__.py
+  ROOT/_jupyroot/kernel/rootkernel.py
+  ROOT/_jupyroot/kernel/utils.py
+  ROOT/_jupyroot/kernel/magics/__init__.py
+  ROOT/_jupyroot/kernel/magics/cppmagic.py
+  ROOT/_jupyroot/kernel/magics/jsrootmagic.py
+  ROOT/_jupyroot/kernel/magics/rootbrowsemagic.py
+  ROOT/_jupyroot/magics/__init__.py
+  ROOT/_jupyroot/magics/cppmagic.py
+  ROOT/_jupyroot/magics/jsrootmagic.py
+  ROOT/_jupyroot/magics/rootbrowsemagic.py
   ROOT/_numbadeclare.py
   ROOT/_pythonization/__init__.py
   ROOT/_pythonization/_cppinstance.py
@@ -133,3 +172,10 @@ set(py_sources
 )
 
 ROOT_PYTHON_PACKAGE(ROOT SOURCES ${py_sources})
+
+# The Python version at build time should be easy to figure out from Python, so
+# we can raise an exception if the used Python version is not compatible.
+# The file will be implicitly installed by install(DIRECTORY ...) in the
+# ROOT_PYTHON_PACKAGE function.
+set(python_version_file "${localruntimedir}/ROOT/_python_version.py")
+file(WRITE "${python_version_file}" "_root_python_version = \"${Python3_VERSION}\"\n")

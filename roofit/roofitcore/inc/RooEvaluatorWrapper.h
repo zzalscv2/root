@@ -21,8 +21,10 @@
 #include <RooRealProxy.h>
 #include <RooSetProxy.h>
 
+#include <memory>
 #include <stack>
 
+class ChangeOperModeRAII;
 class RooAbsArg;
 class RooAbsCategory;
 class RooAbsPdf;
@@ -52,24 +54,24 @@ public:
 
    void applyWeightSquared(bool flag) override { _topNode->applyWeightSquared(flag); }
 
-   void printMultiline(std::ostream &os, Int_t /*contents*/, bool /*verbose*/ = false,
-                       TString /*indent*/ = "") const override
-   {
-      _evaluator->print(os);
-   }
-
    /// The RooFit::Evaluator is dealing with constant terms itself.
    void constOptimizeTestStatistic(ConstOpCode /*opcode*/, bool /*doAlsoTrackingOpt*/) override {}
 
    bool hasGradient() const override;
+   bool hasHessian() const override;
 
    void gradient(double *out) const override;
+   void hessian(double *out) const override;
 
    void generateGradient();
+   void generateHessian();
 
    void setUseGeneratedFunctionCode(bool);
-
    void writeDebugMacro(std::string const &) const;
+
+   std::unique_ptr<ChangeOperModeRAII> setOperModes(RooAbsArg::OperMode opMode);
+
+   RooFit::Evaluator &evaluator() const { return *_evaluator; }
 
 protected:
    double evaluate() const override;

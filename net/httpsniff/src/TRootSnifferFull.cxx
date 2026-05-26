@@ -42,7 +42,6 @@
 #include <cstring>
 
 /** \class TRootSnifferFull
-\ingroup http
 
 Extends TRootSniffer for many ROOT classes
 
@@ -204,10 +203,8 @@ void TRootSnifferFull::CreateMemFile()
    if (fMemFile)
       return;
 
-   TDirectory *olddir = gDirectory;
-   gDirectory = nullptr;
-   TFile *oldfile = gFile;
-   gFile = nullptr;
+   TDirectory::TContext dirCtx{nullptr};
+   TFile::TContext fileCtx{nullptr};
 
    fMemFile = new TMemFile("dummy.file", "RECREATE");
    gROOT->GetListOfFiles()->Remove(fMemFile);
@@ -239,9 +236,6 @@ void TRootSnifferFull::CreateMemFile()
    fMemFile->WriteStreamerInfo();
 
    fSinfo = fMemFile->GetStreamerInfoList();
-
-   gDirectory = olddir;
-   gFile = oldfile;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -294,10 +288,8 @@ Bool_t TRootSnifferFull::ProduceBinary(const std::string &path, const std::strin
    // ensure that memfile exists
    CreateMemFile();
 
-   TDirectory *olddir = gDirectory;
-   gDirectory = nullptr;
-   TFile *oldfile = gFile;
-   gFile = nullptr;
+   TDirectory::TContext dirCtx{nullptr};
+   TFile::TContext fileCtx{nullptr};
 
    TObject *obj = (TObject *)obj_ptr;
 
@@ -312,9 +304,6 @@ Bool_t TRootSnifferFull::ProduceBinary(const std::string &path, const std::strin
    delete fSinfo;
    fMemFile->WriteStreamerInfo();
    fSinfo = fMemFile->GetStreamerInfoList();
-
-   gDirectory = olddir;
-   gFile = oldfile;
 
    res.resize(sbuf->Length());
    std::copy((const char *)sbuf->Buffer(), (const char *)sbuf->Buffer() + sbuf->Length(), res.begin());
@@ -351,13 +340,16 @@ Bool_t TRootSnifferFull::ProduceRootFile(const std::string &path, const std::str
          store_name = obj_name;
    }
 
-   TDirectory *olddir = gDirectory;
-   gDirectory = nullptr;
-   TFile *oldfile = gFile;
-   gFile = nullptr;
+   TDirectory::TContext dirCtx{nullptr};
+   struct RestoreGFile {
+      TFile *oldFile{gFile};
+      ~RestoreGFile() { gFile = oldFile; }
+   } restoreGFile;
 
    {
-      TMemFile memfile("dummy.file", "RECREATE");
+      TMemFile memfile("dummy.file", "RECREATE",
+                        TString::Format("Object %s", path.c_str()),
+                        ROOT::RCompressionSetting::EDefaults::kUseCompiledDefault, 1024);
       gROOT->GetListOfFiles()->Remove(&memfile);
 
       memfile.WriteObjectAny(obj_ptr, obj_cl, store_name);
@@ -366,9 +358,6 @@ Bool_t TRootSnifferFull::ProduceRootFile(const std::string &path, const std::str
       res.resize(memfile.GetSize());
       memfile.CopyTo(res.data(), memfile.GetSize());
    }
-
-   gDirectory = olddir;
-   gFile = oldfile;
 
    return kTRUE;
 }
@@ -428,7 +417,7 @@ Bool_t TRootSnifferFull::ProduceImage(Int_t kind, const std::string &path, const
       if (gDebug > 1)
          Info("TRootSniffer", "Crate IMAGE from object %s", obj->GetName());
 
-      Int_t width(300), height(200);
+      Int_t width = 300, height = 200;
       TString drawopt;
 
       if (!options.empty()) {
@@ -441,9 +430,7 @@ Bool_t TRootSnifferFull::ProduceImage(Int_t kind, const std::string &path, const
          Int_t h = url.GetIntValueFromOptions("h");
          if (h > 10)
             height = h;
-         const char *opt = url.GetValueFromOptions("opt");
-         if (opt)
-            drawopt = opt;
+         drawopt = DecodeUrlOptionValue(url.GetValueFromOptions("opt"), kTRUE);
       }
 
       Bool_t isbatch = gROOT->IsBatch();
@@ -639,47 +626,46 @@ Bool_t TRootSnifferFull::ProduceExe(const std::string &path, const std::string &
             return debug != nullptr;
          const char *rest_url = pos + strlen(method_name) + 7;
          if (*rest_url == '&') ++rest_url;
-         call_args.Form("\"%s\"", rest_url);
+         call_args.Append("\"");
+         call_args.Append(DecodeUrlOptionValue(rest_url, kTRUE));
+         call_args.Append("\"");
          break;
       }
 
       TString sval;
       const char *val = url.GetValueFromOptions(arg->GetName());
-      if (val) {
-         sval = DecodeUrlOptionValue(val, kFALSE);
-         val = sval.Data();
-      }
+      if (val)
+         sval = DecodeUrlOptionValue(val, kTRUE);
 
-      if ((val != nullptr) && (strcmp(val, "_this_") == 0)) {
+      Bool_t sanitize_numeric = kFALSE;
+
+      if (sval == "_this_") {
          // special case - object itself is used as argument
          sval.Form("(%s*)0x%zx", obj_cl->GetName(), (size_t)obj_ptr);
-         val = sval.Data();
-      } else if ((val != nullptr) && (fCurrentArg != nullptr) && (fCurrentArg->GetPostData() != nullptr)) {
+      } else if ((fCurrentArg != nullptr) && (fCurrentArg->GetPostData() != nullptr)) {
          // process several arguments which are specific for post requests
-         if (strcmp(val, "_post_object_xml_") == 0) {
+         if (fAllowPostObject && (sval == "_post_object_xml_")) {
             // post data has extra 0 at the end and can be used as null-terminated string
             post_obj = TBufferXML::ConvertFromXML((const char *)fCurrentArg->GetPostData());
-            if (!post_obj) {
+            if (!post_obj)
                sval = "0";
-            } else {
+            else {
                sval.Form("(%s*)0x%zx", post_obj->ClassName(), (size_t)post_obj);
                if (url.HasOption("_destroy_post_"))
                   garbage.Add(post_obj);
             }
-            val = sval.Data();
-         } else if (strcmp(val, "_post_object_json_") == 0) {
+         } else if (fAllowPostObject && (sval == "_post_object_json_")) {
             // post data has extra 0 at the end and can be used as null-terminated string
             post_obj = TBufferJSON::ConvertFromJSON((const char *)fCurrentArg->GetPostData());
-            if (!post_obj) {
+            if (!post_obj)
                sval = "0";
-            } else {
+            else {
                sval.Form("(%s*)0x%zx", post_obj->ClassName(), (size_t)post_obj);
                if (url.HasOption("_destroy_post_"))
                   garbage.Add(post_obj);
             }
-            val = sval.Data();
-         } else if ((strcmp(val, "_post_object_") == 0) && url.HasOption("_post_class_")) {
-            TString clname = url.GetValueFromOptions("_post_class_");
+         } else if (fAllowPostObject && (sval == "_post_object_") && url.HasOption("_post_class_")) {
+            TString clname = DecodeUrlOptionValue(url.GetValueFromOptions("_post_class_"), kTRUE);
             TClass *arg_cl = gROOT->GetClass(clname, kTRUE, kTRUE);
             if ((arg_cl != nullptr) && (arg_cl->GetBaseClassOffset(TObject::Class()) == 0) && (post_obj == nullptr)) {
                post_obj = (TObject *)arg_cl->New();
@@ -696,39 +682,61 @@ Bool_t TRootSnifferFull::ProduceExe(const std::string &path, const std::string &
                      garbage.Add(post_obj);
                }
             }
-            sval.Form("(%s*)0x%zx", clname.Data(), (size_t)post_obj);
-            val = sval.Data();
-         } else if (strcmp(val, "_post_data_") == 0) {
+            if (!post_obj)
+               sval = "0";
+            else
+               sval.Form("(%s*)0x%zx", clname.Data(), (size_t)post_obj);
+         } else if (sval == "_post_data_")
             sval.Form("(void*)0x%zx", (size_t)fCurrentArg->GetPostData());
-            val = sval.Data();
-         } else if (strcmp(val, "_post_length_") == 0) {
+         else if (sval == "_post_length_")
             sval.Form("%ld", (long)fCurrentArg->GetPostDataLength());
-            val = sval.Data();
-         }
-      }
+         else
+            sanitize_numeric = kTRUE;
+      } else
+         sanitize_numeric = kTRUE;
 
-      if (!val)
-         val = arg->GetDefault();
+      if (sval.IsNull() && arg->GetDefault())
+         sval = arg->GetDefault();
 
       if (debug)
-         debug->append(TString::Format("  Argument:%s Type:%s Value:%s \n", arg->GetName(), arg->GetFullTypeName(),
-                                       val ? val : "<missed>")
-                          .Data());
-      if (!val)
-         return debug != nullptr;
+         debug->append(
+            TString::Format("  Argument:%s Type:%s Value:%s \n", arg->GetName(), arg->GetFullTypeName(), sval.Data())
+               .Data());
 
       if (call_args.Length() > 0)
          call_args += ", ";
 
-      if ((strcmp(arg->GetFullTypeName(), "const char*") == 0) || (strcmp(arg->GetFullTypeName(), "Option_t*") == 0)) {
-         int len = strlen(val);
-         if ((strlen(val) < 2) || (*val != '\"') || (val[len - 1] != '\"'))
-            call_args.Append(TString::Format("\"%s\"", val));
-         else
-            call_args.Append(val);
+      Bool_t isstr = (strcmp(arg->GetFullTypeName(), "const char*") == 0) ||
+                     (strcmp(arg->GetFullTypeName(), "Option_t*") == 0) ||
+                     (strcmp(arg->GetFullTypeName(), "string") == 0);
+
+      if (isstr) {
+         // check that quotes provided for the string argument
+         // all special characters were escaped before
+         if (sval.IsNull())
+            sval = "\"\"";
+         else {
+            if (sval[0] != '"')
+               sval.Prepend("\"");
+            if (sval[sval.Length() - 1] != '"')
+               sval.Append("\"");
+         }
       } else {
-         call_args.Append(val);
+         // for numeric types keep only numeric and alphabetic characters
+         // exclude others - especially remove all escape characters
+         if (sanitize_numeric) {
+            TString sanitized;
+            for(Size_t i = 0; i < sval.Length(); ++i) {
+               if (std::isalnum(sval[i]) || std::strchr(".:+-", sval[i]))
+                  sanitized.Append(sval[i]);
+            }
+            sval = sanitized;
+         }
+         if (sval.IsNull())
+            sval = "0";
       }
+
+      call_args.Append(sval);
    }
 
    TMethodCall *call = nullptr;

@@ -97,6 +97,11 @@ namespace ROOT {
    void DisableImplicitMT();
    Bool_t IsImplicitMTEnabled();
    UInt_t GetThreadPoolSize();
+   namespace Experimental {
+   void EnableObjectAutoRegistration();
+   void DisableObjectAutoRegistration();
+   bool ObjectAutoRegistrationEnabled();
+   } // namespace Experimental
 }
 
 class TROOT : public TDirectory {
@@ -166,7 +171,6 @@ protected:
    TSeqCollection  *fMessageHandlers = nullptr;       ///< List of message handlers
    TSeqCollection  *fStreamerInfo = nullptr;          ///< List of active StreamerInfo classes
    TCollection     *fClassGenerators = nullptr;       ///< List of user defined class generators;
-   TSeqCollection  *fSecContexts = nullptr;           ///< List of security contexts (TSecContext)
    TSeqCollection  *fClipboard = nullptr;             ///< List of clipboard objects
    TSeqCollection  *fDataSets = nullptr;              ///< List of data sets (TDSet or TChain)
    AListOfEnums_t   fEnums = nullptr;                 ///< List of enum types
@@ -256,7 +260,6 @@ public:
    TSeqCollection   *GetListOfStreamerInfo() const { return fStreamerInfo; }
    TSeqCollection   *GetListOfMessageHandlers() const { return fMessageHandlers; }
    TCollection      *GetListOfClassGenerators() const { return fClassGenerators; }
-   TSeqCollection   *GetListOfSecContexts() const { return fSecContexts; }
    TSeqCollection   *GetClipboard() const { return fClipboard; }
    TSeqCollection   *GetListOfDataSets() const { return fDataSets; }
    TCollection      *GetListOfEnums(Bool_t load = kFALSE);
@@ -366,10 +369,10 @@ public:
    static const TString& GetDocDir();
    static const TString& GetMacroDir();
    static const TString& GetTutorialDir();
-   static const TString &GetSourceDir()
-      R__DEPRECATED(6, 42,
-                    "This function is removed because it made only sense in the corner case where the ROOT source is "
-                    "copied inside the ROOT installation, which is never the case unless the user does it by hand.");
+   static const TString &GetSourceDir() R__DEPRECATED(
+      7, 00,
+      "This function is without any effect because it made only sense in the corner case where the ROOT source is "
+      "copied inside the ROOT installation, which is never the case unless the user does it by hand.");
    static const TString& GetIconPath();
    static const TString& GetTTFFontDir();
 

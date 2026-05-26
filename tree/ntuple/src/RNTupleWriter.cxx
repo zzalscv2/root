@@ -1,5 +1,4 @@
 /// \file RNTupleReader.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2024-02-20
 
@@ -14,6 +13,7 @@
 #include <ROOT/RNTupleWriter.hxx>
 
 #include <ROOT/RLogger.hxx>
+#include <ROOT/RNTupleAttrWriting.hxx>
 #include <ROOT/RNTupleImtTaskScheduler.hxx>
 #include <ROOT/RNTupleFillContext.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
@@ -29,6 +29,11 @@
 #include <TROOT.h>
 
 #include <utility>
+
+static bool IsReservedRNTupleAttrSetName(std::string_view name)
+{
+   return ROOT::StartsWith(name, "__");
+}
 
 ROOT::RNTupleWriter::RNTupleWriter(std::unique_ptr<ROOT::RNTupleModel> model,
                                    std::unique_ptr<ROOT::Internal::RPageSink> sink)
@@ -141,6 +146,12 @@ void ROOT::RNTupleWriter::CommitDataset()
       return;
 
    CommitCluster(true /* commitClusterGroup */);
+
+   // Commit attributes
+   for (auto &attrSet : fAttributeSets) {
+      CloseAttributeSetImpl(*attrSet);
+   }
+
    fFillContext.fSink->CommitDataset();
    fFillContext.fModel->Expire();
 }
@@ -159,4 +170,59 @@ ROOT::Experimental::RNTupleWriter_Append(std::unique_ptr<ROOT::RNTupleModel> mod
    auto [ntupleDir, ntupleBasename] = ROOT::Experimental::Detail::DecomposePath(ntupleName);
    auto sink = std::make_unique<ROOT::Internal::RPageSinkFile>(ntupleBasename, file, ntupleDir, options);
    return ROOT::RNTupleWriter::Create(std::move(model), std::move(sink), options);
+}
+
+ROOT::Experimental::RNTupleAttrSetWriterHandle
+ROOT::RNTupleWriter::CreateAttributeSet(std::unique_ptr<ROOT::RNTupleModel> model, std::string_view name,
+                                        const ROOT::RNTupleWriteOptions *optsPtr)
+{
+   if (IsReservedRNTupleAttrSetName(name)) {
+      throw ROOT::RException(R__FAIL("Cannot create Attribute Set named \"" + std::string(name) +
+                                     "\": names starting with '__' are reserved for internal use."));
+   }
+
+   if (name.empty())
+      throw ROOT::RException(R__FAIL("cannot create an Attribute Set with an empty name"));
+
+   const RNTupleWriteOptions &opts = optsPtr != nullptr ? *optsPtr : fFillContext.fSink->GetWriteOptions();
+   auto attrSink = fFillContext.fSink->CloneAsHidden(name, opts);
+
+   std::string nameStr{name};
+   auto attrSet = Experimental::RNTupleAttrSetWriter::Create(fFillContext, std::move(attrSink), std::move(model));
+
+   // check for duplicates
+   auto existingIt = std::find_if(fAttributeSets.begin(), fAttributeSets.end(),
+                                  [&nameStr](const auto &set) { return set->GetDescriptor().GetName() == nameStr; });
+   if (existingIt != fAttributeSets.end())
+      throw ROOT::RException(R__FAIL(std::string("attempted to create an Attribute Set named '") + nameStr +
+                                     "', but one already exists with that name"));
+
+   auto &addedSet = fAttributeSets.emplace_back(std::move(attrSet));
+   return Experimental::RNTupleAttrSetWriterHandle{addedSet};
+}
+
+void ROOT::RNTupleWriter::CloseAttributeSetImpl(ROOT::Experimental::RNTupleAttrSetWriter &attrSet)
+{
+   auto attrAnchorInfo = attrSet.Commit();
+   fFillContext.fSink->CommitAttributeSet(attrSet.GetDescriptor().GetName(), attrAnchorInfo);
+}
+
+void ROOT::RNTupleWriter::CloseAttributeSet(ROOT::Experimental::RNTupleAttrSetWriterHandle handle)
+{
+   auto writer = handle.fWriter.lock();
+   if (writer) {
+      throw ROOT::RException(R__FAIL("Tried to close an invalid AttributeSetWriter"));
+   }
+
+   CloseAttributeSetImpl(*writer);
+
+   auto &attrSets = fAttributeSets;
+   for (auto it = attrSets.begin(), end = attrSets.end(); it != end; ++it) {
+      if (it->get() == writer.get()) {
+         attrSets.erase(it);
+         return;
+      }
+   }
+   // We must have erased the attribute set.
+   R__ASSERT(false);
 }

@@ -253,7 +253,7 @@ RooCmdArg IntegrateBins(double precision);
 
 // RooAbsPdf::fitTo arguments
 RooCmdArg PrefitDataFraction(double data_ratio = 0.0) ;
-RooCmdArg Optimize(Int_t flag=2) ;
+RooCmdArg Optimize(Int_t flag = 2);
 
 class EvalBackend : public RooCmdArg {
 public:

@@ -2409,8 +2409,9 @@ TClass *TTabCom::MakeClassFromVarName(const char varName[],
 
    // not found...
    if (!varName_exists) {
-      std::cerr << std::endl << "variable " << dblquote(varName) << " not defined."
-         << std::endl;
+      if (cut == 0) {
+         std::cerr << std::endl << "variable " << dblquote(varName) << " not defined." << std::endl;
+      }
       return nullptr;                 //* RETURN *//
    }
 
@@ -2500,6 +2501,20 @@ TClass *TTabCom::MakeClassFromVarName(const char varName[],
             return nullptr;           // RETURN
          }
       } else {
+         // Find the TClass and see if the object has an operator->, for example if it is a smart pointer.
+         auto cl = TClass::GetClass(className);
+         if (cl != nullptr) {
+            auto op = cl->GetMethod("operator->", "");
+            if (op != nullptr) {
+               // Get the return type and remove the '*', which should be there
+               className = op->GetReturnTypeNormalizedName();
+               if (className[className.Length() - 1] == '*') {
+                  className.Chop();
+               }
+               return TClass::GetClass(className);
+            }
+         }
+
          // user is using operator->() instead of operator.()
          // ==>
          //      1. we are in wrong context.

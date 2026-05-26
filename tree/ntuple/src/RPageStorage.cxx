@@ -1,5 +1,4 @@
 /// \file RPageStorage.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2018-10-04
 
@@ -15,6 +14,7 @@
 #include <ROOT/RPageStorageFile.hxx>
 #include <ROOT/RColumn.hxx>
 #include <ROOT/RFieldBase.hxx>
+#include <ROOT/RNTupleAttrUtils.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleModel.hxx>
@@ -50,6 +50,8 @@ using ROOT::Internal::RColumnElementBase;
 using ROOT::Internal::RExtraTypeInfoDescriptorBuilder;
 using ROOT::Internal::RFieldDescriptorBuilder;
 using ROOT::Internal::RNTupleSerializer;
+
+using ROOT::Experimental::Internal::RNTupleAttrSetDescriptorBuilder;
 
 using ROOT::Internal::RCluster;
 using ROOT::Internal::ROnDiskPage;
@@ -769,11 +771,11 @@ ROOT::Internal::RPageSink::SealPage(const ROOT::Internal::RPage &page, const RCo
    return SealPage(config);
 }
 
-void ROOT::Internal::RPageSink::CommitDataset()
+ROOT::Internal::RNTupleLink ROOT::Internal::RPageSink::CommitDataset()
 {
    for (const auto &cb : fOnDatasetCommitCallbacks)
       cb(*this);
-   CommitDatasetImpl();
+   return CommitDatasetImpl();
 }
 
 ROOT::Internal::RPage ROOT::Internal::RPageSink::ReservePage(ColumnHandle_t columnHandle, std::size_t nElements)
@@ -843,10 +845,13 @@ ROOT::Internal::RPagePersistentSink::AddColumn(ROOT::DescriptorId_t fieldId, RCo
 void ROOT::Internal::RPagePersistentSink::UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset,
                                                        ROOT::NTupleSize_t firstEntry)
 {
-   if (fIsInitialized)
-      for (const auto &field : changeset.fAddedFields)
-         if (field->GetStructure() == ENTupleStructure::kStreamer)
+   if (fIsInitialized) {
+      for (const auto &field : changeset.fAddedFields) {
+         if (field->GetStructure() == ENTupleStructure::kStreamer) {
             throw ROOT::RException(R__FAIL("a Model cannot be extended with Streamer fields"));
+         }
+      }
+   }
 
    const auto &descriptor = fDescriptorBuilder.GetDescriptor();
 
@@ -1266,7 +1271,22 @@ void ROOT::Internal::RPagePersistentSink::CommitClusterGroup()
    fNextClusterInGroup = nClusters;
 }
 
-void ROOT::Internal::RPagePersistentSink::CommitDatasetImpl()
+void ROOT::Internal::RPagePersistentSink::CommitAttributeSet(std::string_view attrSetName,
+                                                             const RNTupleLink &attrAnchorInfo)
+{
+   using namespace ROOT::Experimental::Internal::RNTupleAttributes;
+
+   RNTupleAttrSetDescriptorBuilder attrSetDescBuilder;
+   auto attrSetDesc = attrSetDescBuilder.SchemaVersion(kSchemaVersionMajor, kSchemaVersionMinor)
+                         .AnchorLength(attrAnchorInfo.fLength)
+                         .AnchorLocator(attrAnchorInfo.fLocator)
+                         .Name(attrSetName)
+                         .MoveDescriptor()
+                         .Unwrap();
+   fDescriptorBuilder.AddAttributeSet(std::move(attrSetDesc)).ThrowOnError();
+}
+
+ROOT::Internal::RNTupleLink ROOT::Internal::RPagePersistentSink::CommitDatasetImpl()
 {
    if (!fInfosOfStreamerFields.empty()) {
       // De-duplicate extra type infos before writing. Usually we won't have them already in the descriptor, but
@@ -1294,7 +1314,7 @@ void ROOT::Internal::RPagePersistentSink::CommitDatasetImpl()
    auto bufFooter = MakeUninitArray<unsigned char>(szFooter);
    RNTupleSerializer::SerializeFooter(bufFooter.get(), descriptor, fSerializationContext);
 
-   CommitDatasetImpl(bufFooter.get(), szFooter);
+   return CommitDatasetImpl(bufFooter.get(), szFooter);
 }
 
 void ROOT::Internal::RPagePersistentSink::EnableDefaultMetrics(const std::string &prefix)

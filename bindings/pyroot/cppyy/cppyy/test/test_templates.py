@@ -1133,9 +1133,7 @@ class TestTEMPLATES:
 
         assert ns.testfun["testptr"](cppyy.bind_object(cppyy.nullptr, ns.Test))
 
-        # TODO: raises TypeError; the problem is that the type is resolved
-        # from UsingPtr::Test*const& to UsingPtr::Test*& (ie. `const` is lost)
-        # assert ns.testfun["UsingPtr::testptr"](cppyy.nullptr)
+        assert ns.testfun["UsingPtr::testptr"](cppyy.nullptr)
 
         assert ns.testptr.__name__     == "Test"
         assert ns.testptr.__cpp_name__ == "UsingPtr::Test*"
@@ -1206,6 +1204,28 @@ class TestTEMPLATES:
 
         a = ns.S(1, 2)
         assert a.m_a == 1
+        
+    def test37_monkey_patching_template_proxy(self):
+        """Monkey patching Template Proxy"""
+        import cppyy
+        from cppyy import gbl
+
+        cppyy.cppdef(r"""
+            struct MyMonkey {
+                template <typename... Ts>
+                bool m(std::vector<int> v) { return true; }
+        
+                template <typename T = void>
+                bool m(int i) { return false; }
+            };
+        """)
+
+        gbl.MyMonkey._m = gbl.MyMonkey.m
+        gbl.MyMonkey.m = lambda self, x: gbl.MyMonkey._m(self, x)
+        a = gbl.MyMonkey()
+        assert not a.m(42)
+        assert a.m([1, 2, 3])
+        assert not a.m(42)
 
 
 class TestTEMPLATED_TYPEDEFS:

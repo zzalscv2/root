@@ -81,6 +81,8 @@ class ImportLoadLibs(unittest.TestCase):
         # AddressSanitizer runtime and ROOT configuration
         "libclang_rt.asan-.*",
         "libROOTSanitizerConfig",
+        "libjitterentropy",  # by libssl on openSUSE
+        "libsandbox",  # Gentoo portage test environment
     ]
 
     # Verbose mode of the test

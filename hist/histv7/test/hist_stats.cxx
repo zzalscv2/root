@@ -98,6 +98,36 @@ TEST(RHistStats, DisableDimension)
    stats.Fill(4, 5, 6, RWeight(1));
 
    EXPECT_EQ(stats.GetNEntries(), 4);
+   EXPECT_THROW(stats.ComputeMean(1), std::invalid_argument);
+   EXPECT_THROW(stats.ComputeVariance(1), std::invalid_argument);
+   EXPECT_THROW(stats.ComputeSkewness(1), std::invalid_argument);
+   EXPECT_THROW(stats.ComputeKurtosis(1), std::invalid_argument);
+}
+
+TEST(RHistStats, Taint)
+{
+   RHistStats stats(1);
+   stats.Taint();
+   EXPECT_TRUE(stats.IsTainted());
+
+   // Modifications are still possible.
+   stats.Add(stats);
+   stats.Fill(1);
+   stats.Scale(2.0);
+
+   // Any read access will throw.
+   EXPECT_THROW(stats.GetNEntries(), std::logic_error);
+   EXPECT_THROW(stats.GetSumW(), std::logic_error);
+   EXPECT_THROW(stats.GetSumW2(), std::logic_error);
+   EXPECT_THROW(stats.GetDimensionStats(), std::logic_error);
+   EXPECT_THROW(stats.ComputeMean(), std::logic_error);
+   EXPECT_THROW(stats.ComputeVariance(), std::logic_error);
+   EXPECT_THROW(stats.ComputeSkewness(), std::logic_error);
+   EXPECT_THROW(stats.ComputeKurtosis(), std::logic_error);
+
+   // Clear resets the object, including its taint status.
+   stats.Clear();
+   EXPECT_NO_THROW(stats.GetNEntries());
 }
 
 TEST(RHistStats, Add)
@@ -222,6 +252,27 @@ TEST(RHistStats, AddAtomicDifferent)
    EXPECT_THROW(statsA.AddAtomic(statsB), std::invalid_argument);
    EXPECT_THROW(statsB.AddAtomic(statsC), std::invalid_argument);
    EXPECT_THROW(statsC.AddAtomic(statsB), std::invalid_argument);
+}
+
+TEST(RHistStats, AddExceptionSafety)
+{
+   RHistStats statsA(2);
+   RHistStats statsB(2);
+   statsB.DisableDimension(1);
+
+   statsA.Fill(1, 2);
+   ASSERT_EQ(statsA.GetNEntries(), 1);
+   statsB.Fill(1, 2);
+
+   EXPECT_THROW(statsA.Add(statsB), std::invalid_argument);
+   EXPECT_THROW(statsA.AddAtomic(statsB), std::invalid_argument);
+
+   // Verify exception safety. Only the original entry should be there.
+   EXPECT_EQ(statsA.GetNEntries(), 1);
+   EXPECT_EQ(statsA.GetSumW(), 1);
+   EXPECT_EQ(statsA.GetSumW2(), 1);
+   EXPECT_EQ(statsA.GetDimensionStats(0).fSumWX, 1);
+   EXPECT_EQ(statsA.GetDimensionStats(1).fSumWX, 2);
 }
 
 TEST(RHistStats, Clear)
@@ -571,6 +622,46 @@ TEST(RHistStats, FillTupleWeightInvalidNumberOfArguments)
    EXPECT_THROW(stats2.Fill(std::make_tuple(1), RWeight(1)), std::invalid_argument);
    EXPECT_NO_THROW(stats2.Fill(std::make_tuple(1, 2), RWeight(1)));
    EXPECT_THROW(stats2.Fill(std::make_tuple(1, 2, 3), RWeight(1)), std::invalid_argument);
+}
+
+TEST(RHistStats, FillWeightNegative)
+{
+   RHistStats stats(1);
+   stats.Fill(1, RWeight(1));
+   stats.Fill(1, RWeight(-1));
+
+   EXPECT_EQ(stats.GetNEntries(), 2);
+   EXPECT_EQ(stats.GetSumW(), 0);
+   EXPECT_EQ(stats.GetSumW2(), 2);
+   // The two weighted entries cancel out each other.
+   EXPECT_EQ(stats.ComputeNEffectiveEntries(), 0);
+
+   // Cannot compute the mean, and all other computations depend on it.
+   EXPECT_TRUE(std::isnan(stats.ComputeMean()));
+   EXPECT_TRUE(std::isnan(stats.ComputeVariance()));
+   EXPECT_TRUE(std::isnan(stats.ComputeStdDev()));
+   EXPECT_TRUE(std::isnan(stats.ComputeSkewness()));
+   EXPECT_TRUE(std::isnan(stats.ComputeKurtosis()));
+}
+
+TEST(RHistStats, FillExceptionSafety)
+{
+   RHistStats stats(2);
+
+   stats.Fill(1, 2);
+   ASSERT_EQ(stats.GetNEntries(), 1);
+
+   EXPECT_THROW(stats.Fill(1, "b"), std::invalid_argument);
+   EXPECT_THROW(stats.Fill(std::make_tuple(1, "b")), std::invalid_argument);
+   EXPECT_THROW(stats.Fill(1, "b", RWeight(1)), std::invalid_argument);
+   EXPECT_THROW(stats.Fill(std::make_tuple(1, "b"), RWeight(1)), std::invalid_argument);
+
+   // Verify exception safety. Only the first entry should be there.
+   EXPECT_EQ(stats.GetNEntries(), 1);
+   EXPECT_EQ(stats.GetSumW(), 1);
+   EXPECT_EQ(stats.GetSumW2(), 1);
+   EXPECT_EQ(stats.GetDimensionStats(0).fSumWX, 1);
+   EXPECT_EQ(stats.GetDimensionStats(1).fSumWX, 2);
 }
 
 TEST(RHistStats, Scale)

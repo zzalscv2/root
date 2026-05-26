@@ -22,13 +22,13 @@
 
 #include "ROOT/StringUtils.hxx"
 
-#include <array>
 #include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <set>
+#include <stack>
 #include <sstream>
 #include <unordered_map>
 
@@ -47,6 +47,43 @@ std::string doubleToString(double val)
    std::stringstream ss;
    ss << std::setprecision(std::numeric_limits<double>::max_digits10) << val;
    return ss.str();
+}
+
+bool areMatching(char opening, char closing)
+{
+   return (opening == '(' && closing == ')') || (opening == '{' && closing == '}') ||
+          (opening == '[' && closing == ']') || (opening == '\"' && closing == '\"');
+}
+
+bool isBalanced(const TString &s)
+{
+   std::stack<char> i;
+   auto sLength = s.Length();
+   for (Ssiz_t c = 0; c < sLength; ++c) {
+      if (s[c] == '[' || s[c] == '{' || s[c] == '(') {
+         i.push(s[c]);
+      } else if (s[c] == ']' || s[c] == '}' || s[c] == ')') {
+         if (i.empty() || !areMatching(i.top(), s[c])) {
+            Error("TFormula", "Found unbalanced char '%c' (expected closing of '%c') at index %d of '%s'", s[c], i.top(), c,
+                  s.Data());
+            return false;
+         } else
+            i.pop();
+      } else if (s[c] == '\"') {
+         if (i.empty())
+            i.push(s[c]);
+         else if (areMatching(i.top(), s[c]))
+            i.pop();
+         else {
+            i.push(s[c]);
+         }
+      }
+   }
+   if (!i.empty()) {
+      Error("TFormula", "String '%s' with %zu unbalanced chars.", s.Data(), i.size());
+      return false;
+   }
+   return true;
 }
 
 // In the interpreter, we must match the SIMD width used by compiled ROOT.
@@ -203,6 +240,7 @@ std::string vectorizedArgType()
     2. Two Dimensional functions:
       - `xygaus` is a substitute for `[Constant]*exp(-0.5*pow(((x-[MeanX])/[SigmaX]),2 )- 0.5*pow(((y-[MeanY])/[SigmaY]),2))`, a 2d Gaussian without correlation.
       - `bigaus` is a substitute for `[Constant]*ROOT::Math::bigaussian_pdf (x,y,[SigmaX],[SigmaY],[Rho],[MeanX],[MeanY])`, a 2d gaussian including a correlation parameter.
+         Note the different order of parameters for bigaus: [Constant]=[0], [SigmaX]=[2], [SigmaY]=[4], [Rho]=[5], [MeanX]=[1], [MeanY]=[3]
     3. Three Dimensional functions:
       - `xyzgaus` is for a 3d Gaussians without correlations:
       `[Constant]*exp(-0.5*pow(((x-[MeanX])/[SigmaX]),2 )- 0.5*pow(((y-[MeanY])/[SigmaY]),2 )- 0.5*pow(((z-[MeanZ])/[SigmaZ]),2))`
@@ -262,9 +300,9 @@ std::string vectorizedArgType()
     conjunction with a variable or a parameter. Variables and parameters are treated
     as doubles internally for which these operators are not defined.
     This means the following command will run successfully
-       ```root -l -q -e TFormula("", "x+(10%3)").Eval(0)```
+       ```root -q -e TFormula("", "x+(10%3)").Eval(0)```
     but not
-       ```root -l -q -e TFormula("", "x%10").Eval(0)```.
+       ```root -q -e TFormula("", "x%10").Eval(0)```.
 
     The operator `^` is defined to mean exponentiation instead of the C/C++
     interpretation xor. `**` is added, also meaning exponentiation.
@@ -374,9 +412,9 @@ Bool_t TFormula::IsHexadecimal(const TString & formula, int i)
    // }
    return false;
 }
+
 ////////////////////////////////////////////////////////////////////////////
-// check is given position is in a parameter name i.e. within "[ ]"
-////
+/// check if given position is in a parameter name i.e. within "[ ]"
 Bool_t TFormula::IsAParameterName(const TString & formula, int pos) {
 
    Bool_t foundOpenParenthesis = false;
@@ -1250,7 +1288,7 @@ void TFormula::HandleParametrizedFunctions(TString &formula)
          // check if function has specified the [...] e.g. gaus[x,y]
          Int_t openingBracketPos = funPos + funName.Length() + (isNormalized ? 1 : 0);
          Int_t closingBracketPos = kNPOS;
-         if (openingBracketPos > formula.Length() || formula[openingBracketPos] != '[') {
+         if (openingBracketPos >= formula.Length() || formula[openingBracketPos] != '[') {
             dim = funDim;
             variables.resize(dim);
             for (Int_t idim = 0; idim < dim; ++idim)
@@ -1428,15 +1466,15 @@ void TFormula::HandleFunctionArguments(TString &formula)
 
       // ignore things that start with square brackets
       if (formula[i] == '[') {
-         while (formula[i] != ']')
+         while (i < formula.Length() && formula[i] != ']')
             i++;
          continue;
       }
       // ignore strings
-      if (formula[i] == '\"') {
+      if (i < formula.Length() && formula[i] == '\"') {
          do
             i++;
-         while (formula[i] != '\"');
+         while (i < formula.Length() && formula[i] != '\"');
          continue;
       }
       // ignore numbers (scientific notation)
@@ -1444,13 +1482,13 @@ void TFormula::HandleFunctionArguments(TString &formula)
          continue;
       // ignore x in hexadecimal number
       if (IsHexadecimal(formula, i)) {
-         while (!IsOperator(formula[i]) && i < formula.Length())
+         while (i < formula.Length() && !IsOperator(formula[i]))
             i++;
          continue;
       }
 
       // investigate possible start of function name
-      if (isalpha(formula[i]) && !IsOperator(formula[i])) {
+      if (i < formula.Length() && isalpha(formula[i]) && !IsOperator(formula[i])) {
          // std::cout << "character : " << i << " " << formula[i] << " is not an operator and is alpha" << std::endl;
 
          int j; // index to end of name
@@ -1796,7 +1834,7 @@ void TFormula::HandleExponentiation(TString &formula)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Handle linear functions defined with the operator ++.
+/// Handle linear functions defined with the operator ++ (@ is the shorthand).
 
 void TFormula::HandleLinear(TString &formula)
 {
@@ -1808,13 +1846,15 @@ void TFormula::HandleLinear(TString &formula)
    TString expandedFormula = "";
    int delimeterPos = 0;
    for(std::size_t iTerm = 0; iTerm < terms.size(); ++iTerm) {
-      // determine the position of the "@" operator in the formula
-      delimeterPos += terms[iTerm].size() + (iTerm == 0);
-      if(IsAParameterName(formula, delimeterPos)) {
-         // append the current term and the remaining formula unchanged to the expanded formula
-         expandedFormula += terms[iTerm];
-         expandedFormula += formula(delimeterPos, formula.Length() - (delimeterPos + 1));
-         break;
+      if (iTerm < terms.size() - 1) { // N terms, N - 1 @
+         // determine the position of the "@" operator in the formula
+         delimeterPos += terms[iTerm].size() + iTerm;
+         if(IsAParameterName(formula, delimeterPos)) {
+            // append the current term and the remaining formula unchanged to the expanded formula
+            expandedFormula += terms[iTerm];
+            expandedFormula += formula(delimeterPos, formula.Length() - delimeterPos);
+            break;
+         }
       }
       SetBit(kLinear, true);
       auto termName = std::string("__linear") + std::to_string(iTerm+1);
@@ -1829,7 +1869,7 @@ void TFormula::HandleLinear(TString &formula)
 
 ////////////////////////////////////////////////////////////////////////////////
 ///    Preprocessing of formula
-///    Replace all ** by ^, and removes spaces.
+///    Replace all ** by ^, all ++ by @, and removes spaces.
 ///    Handle also parametrized functions like polN,gaus,expo,landau
 ///    and exponentiation.
 ///    Similar functionality should be added here.
@@ -1844,7 +1884,7 @@ void TFormula::PreProcessFormula(TString &formula)
    HandleParamRanges(formula);
    HandleFunctionArguments(formula);
    HandleExponentiation(formula);
-   // "++" wil be dealt with Handle Linear
+   // "++" (now @ since we just called ReplaceAll a few lines above) will be dealt with HandleLinear
    HandleLinear(formula);
    // special case for "--" and "++"
    // ("++" needs to be written with whitespace that is removed before but then we re-add it again
@@ -1860,6 +1900,12 @@ Bool_t TFormula::PrepareFormula(TString &formula)
 {
    fFuncs.clear();
    fReadyToExecute = false;
+
+   // Check for balanced parentheses
+   if (!isBalanced(formula)) {
+      return false;
+   }
+
    ExtractFunctors(formula);
 
    // update the expression with the new formula
@@ -1956,7 +2002,7 @@ void TFormula::ExtractFunctors(TString &formula)
          // look for next instance of "\"
          do {
             i++;
-         } while (formula[i] != '\"');
+         } while (i < formula.Length() && formula[i] != '\"');
       }
       // case of e or E for numbers in exponential notation (e.g. 2.2e-3)
       if (IsScientificNotation(formula, i))
@@ -1965,7 +2011,7 @@ void TFormula::ExtractFunctors(TString &formula)
       if (IsHexadecimal(formula, i)) {
          // find position of operator
          // do not check cases if character is not only a to f, but accept anything
-         while (!IsOperator(formula[i]) && i < formula.Length()) {
+         while (i < formula.Length() && !IsOperator(formula[i])) {
             i++;
          }
          continue;
@@ -1997,7 +2043,7 @@ void TFormula::ExtractFunctors(TString &formula)
          // printf(" build a name %s \n",name.Data() );
          if (formula[i] == '(') {
             i++;
-            if (formula[i] == ')') {
+            if (i < formula.Length() && formula[i] == ')') {
                fFuncs.push_back(TFormulaFunction(name, body, 0));
                name = body = "";
                continue;
@@ -3622,8 +3668,8 @@ TString TFormula::GetExpFormula(Option_t *option) const
          // look for p[number
          if (clingFormula[i] == 'p' && clingFormula[i+1] == '[' && isdigit(clingFormula[i+2]) ) {
             int j = i+3;
-            while ( isdigit(clingFormula[j]) ) { j++;}
-            if (clingFormula[j] != ']') {
+            while ( j < clingFormula.Length() && isdigit(clingFormula[j]) ) { j++;}
+            if ( j >= clingFormula.Length() || clingFormula[j] != ']') {
                Error("GetExpFormula","Parameters not found - invalid expression - return default cling formula");
                return clingFormula;
             }
@@ -3647,8 +3693,8 @@ TString TFormula::GetExpFormula(Option_t *option) const
          // look for [parName]
          if (expFormula[i] == '[') {
             int j = i+1;
-            while ( expFormula[j] != ']' ) { j++;}
-            if (expFormula[j] != ']') {
+            while ( j < expFormula.Length() && expFormula[j] != ']' ) { j++;}
+            if ( j >= expFormula.Length() || expFormula[j] != ']') {
                Error("GetExpFormula","Parameter names not found - invalid expression - return default formula");
                return expFormula;
             }

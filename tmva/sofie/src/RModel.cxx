@@ -3,6 +3,7 @@
 #include <cctype>
 #include <memory>
 #include <string>
+#include <cstdlib>
 
 #ifdef SOFIE_SUPPORT_ROOT_BINARY
 #include "TFile.h"
@@ -11,13 +12,46 @@
 #include "TMVA/RModel.hxx"
 #include "TMVA/SOFIE_common.hxx"
 
-namespace TMVA {
-namespace Experimental {
-namespace SOFIE {
+namespace TMVA::Experimental::SOFIE {
 
 namespace {
+
 const std::string SP = "   ";
+
+void ReplaceAll(std::string &str, const std::string &from, const std::string &to)
+{
+   size_t pos = 0;
+   while ((pos = str.find(from, pos)) != std::string::npos) {
+      str.replace(pos, from.length(), to);
+      pos += to.length();
+   }
 }
+
+bool IsIdentifierChar(char c)
+{
+   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+// Returns true if s is a valid C++ identifier (can be used as a variable name).
+// Dim::param can be either a plain name (e.g. "W") or a computed expression
+// (e.g. "((W+-3)/2+1)"); only the former can be used as a C++ variable name.
+bool IsIdentifier(const std::string &s)
+{
+   if (s.empty() || std::isdigit(static_cast<unsigned char>(s[0])))
+      return false;
+   for (char c : s)
+      if (!IsIdentifierChar(c))
+         return false;
+   return true;
+}
+
+// Get the data member name corresponding to a tensor with a given name.
+std::string TensorMember(std::string const &name)
+{
+   return "tensor_" + name;
+}
+
+} // namespace
 
 std::underlying_type_t<Options> operator|(Options opA, Options opB) {
     return static_cast<std::underlying_type_t<Options>>(opA) | static_cast<std::underlying_type_t<Options>>(opB);
@@ -25,6 +59,7 @@ std::underlying_type_t<Options> operator|(Options opA, Options opB) {
 std::underlying_type_t<Options> operator|(std::underlying_type_t<Options> opA, Options opB) {
     return opA | static_cast<std::underlying_type_t<Options>>(opB);
 }
+
 
 std::vector<size_t> RModel::GetTensorShape(const std::string & name) const {
     auto f = fReadyInputTensorInfos.find(name);
@@ -153,30 +188,34 @@ void RModel::AddInputTensorName(std::string input_name) {
     fInputTensorNames.emplace_back(UTILITY::Clean_name(input_name));
 }
 
-void RModel::AddOperator(std::unique_ptr<ROperator> op, int order_execution) {
-    AddBlasRoutines(op->GetBlasRoutines());
-    auto libs = op->GetStdLibs();
-    auto op_input_tensors = op->GetOpInputTensors();
-    for (auto& stdlib : libs) {
-        AddNeededStdLib(stdlib);
-    }
-    if (order_execution >= 0) {
-        fOperators.insert(fOperators.begin() + order_execution, std::move(op));
-    } else {
-        fOperators.push_back(std::move(op));
-        order_execution = fOperators.size()-1;
-    }
+void RModel::AddOperator(std::unique_ptr<ROperator> op, int order_execution)
+{
+   AddBlasRoutines(op->GetBlasRoutines());
+   auto libs = op->GetStdLibs();
+   auto op_input_tensors = op->GetOpInputTensors();
+   for (auto &stdlib : libs) {
+      AddNeededStdLib(stdlib);
+   }
+   if (order_execution >= 0) {
+      fOperators.insert(fOperators.begin() + order_execution, std::move(op));
+   } else {
+      fOperators.push_back(std::move(op));
+      order_execution = fOperators.size() - 1;
+   }
 
-    // storing the last usage of tensors which are input to the operator
-    // (excluding tensors which are inputs to the model or the initialized (weights) tensors)
-    // We call this function during parsing so we don't have yet initialized the operators
-   for(size_t index = 0; index<op_input_tensors.size() &&
-            fInitializedTensors.find(UTILITY::Clean_name(std::string(op_input_tensors[index]))) == fInitializedTensors.end() &&
-            std::find(fInputTensorNames.begin(), fInputTensorNames.end(),
-                      UTILITY::Clean_name(std::string(op_input_tensors[index]))) == fInputTensorNames.end();
-            ++index)
-   {
-      fIntermediateTensorFrequencyLookup[op_input_tensors[index]] = order_execution;
+   // storing the last usage of tensors which are input to the operator
+   // (excluding tensors which are inputs to the model or the initialized (weights) tensors)
+   // We call this function during parsing so we don't have yet initialized the operators
+   for (size_t index = 0; index < op_input_tensors.size(); index++) {
+      if (!IsInitializedTensor(UTILITY::Clean_name(std::string(op_input_tensors[index]))) &&
+          std::find(fInputTensorNames.begin(), fInputTensorNames.end(),
+                    UTILITY::Clean_name(std::string(op_input_tensors[index]))) == fInputTensorNames.end()) {
+
+         fIntermediateTensorFrequencyLookup[op_input_tensors[index]] = order_execution;
+         if (Verbose())
+            std::cout << "adding order execution for " << op_input_tensors[index] << " order " << order_execution
+                      << std::endl;
+      }
    }
 }
 
@@ -188,6 +227,16 @@ void RModel::AddInitializedTensor(std::string tensor_name, ETensorType type, std
     }
     InitializedTensor new_tensor {type, shape, data};
     fInitializedTensors[tensor_name] = new_tensor;
+}
+
+void RModel::AddInitializedTensor(const std::string &tensor_name, ETensorType tensor_type,
+                                  const std::vector<std::size_t> &shape, void *raw_data)
+{
+   size_t size = ConvertShapeToLength(shape);
+   auto itemsize = GetTypeSize(tensor_type);
+   std::shared_ptr<void> data(malloc(size * itemsize), free);
+   std::memcpy(data.get(), raw_data, size * itemsize);
+   AddInitializedTensor(tensor_name, tensor_type, shape, data);
 }
 
 void RModel::AddConstantTensor(std::string tensor_name, ETensorType type, std::vector<std::size_t> shape, std::shared_ptr<void> data) {
@@ -356,7 +405,7 @@ std::string RModel::AllocateIntermediateMemory(std::span<const std::string_view>
       std::string typeName = ConvertTypeToString(GetTensorType(name));
       code << "\n // Allocating memory for intermediate tensor " << name << " with size " << size << " bytes";
       code << "\n"
-           << typeName << "* tensor_" << name << " = reinterpret_cast<" << typeName
+           << typeName << "* " << TensorMember(name) << " = reinterpret_cast<" << typeName
            << "*>(fIntermediateMemoryPool.data() + " << location << ");\n";
    };
 
@@ -573,7 +622,7 @@ void RModel::Initialize(const std::map<std::string, size_t> & inputParams, bool 
       auto shape = ConvertShapeToInt(input.second.shape);
       if (verbose)
          std::cout << "converting input shape for " << input.first << " " << ConvertShapeToString(shape) << " from "
-            << ConvertShapeToString(input.second.shape) << std::endl;
+            << ConvertDimShapeToString(input.second.shape) << std::endl;
       if (!shape.empty()) {
          // case shape is defined (not parametric) we add the tensor in the fReadyInputTensorInfos map and
          // we remove the tensor from the fInputTensorInfo where th eold parametric shape was stored
@@ -607,6 +656,8 @@ void RModel::Initialize(const std::map<std::string, size_t> & inputParams, bool 
 
    std::vector<size_t> temp_available_stack; // vector stores individual chunks of available memory that maybe reused
 
+   // Build set of initialized tensors consumed by at least one runtime operator (need for later)
+   std::unordered_set<std::string> runtimeInitializedInputs;
    for(size_t op_idx = 0; op_idx < fOperators.size(); ++op_idx){
       if (verbose) {
          auto& r = *fOperators[op_idx].get();
@@ -623,14 +674,35 @@ void RModel::Initialize(const std::map<std::string, size_t> & inputParams, bool 
             fIntermediateTensorFrequencyLookup[it] = op_idx;
          }
       }
+      // loop for non-constant operators and flag the inputs which are initialized tensors to make sure they are writable
+      if (!fOperators[op_idx]->IsOutputConstant()) {
+         for (auto &it : fOperators[op_idx]->GetOpInputTensors()) {
+            std::string name = std::string{it};
+            if (fInitializedTensors.find(name) != fInitializedTensors.end()) {
+               runtimeInitializedInputs.insert(name);
+            }
+         }
+      }
+
       i++;
    }
 
    // loop on initialized tensors and make the integers as constant to be
-   // not written in a weight file
+   // not written in a weight file and check if the tensors flagged as not writable are really not writable,
+   // i.e. are not used by non constant operators
    for (auto &it : fInitializedTensors) {
-      if (it.second.IsWeightTensor() && it.second.type() !=  ETensorType::FLOAT)
+      // check if not-writable tensors are really not writable, i.e. are not used by non constant operators
+      if (it.second.IsNotWritable() && runtimeInitializedInputs.find(it.first) != runtimeInitializedInputs.end()) {
+         it.second.SetWritable();
+         if (verbose) {
+            std::cout << "Initialized tensor " << it.first << " is flagged as not writable but is used by non constant operators, set it as writable \n";
+         }
+      }
+      // if the tensor is an integer we can flag it as constant since it will not be written in a weight file and it is considered equivalent as being created from a Constant operator
+      // only FLOAT tensors are written in a weight file
+      if (it.second.type() !=  ETensorType::FLOAT) {
          it.second.SetConstant();
+      }
    }
 
    // check if there are initialized tensors to write in a weight file
@@ -705,6 +777,7 @@ std::string GenerateConstantTensorCode(const std::pair<std::string, InitializedT
 
    // and check if all values are the same
    bool sameData = false;
+
    // for non stack allocation check if data are the same
    if (!allocateOnStack && length > 1) {
       size_t idx = 1;
@@ -714,7 +787,8 @@ std::string GenerateConstantTensorCode(const std::pair<std::string, InitializedT
       } while (sameData && idx < length);
    }
    if (allocateOnStack) {
-      strs << type << " tensor_" << t.first << "[" << length << "] = " << ConvertValuesToString(length, data) << ";\n";
+      strs << type << " fTensor_" << t.first << "[" << length << "] = " << ConvertValuesToString(length, data) << ";\n";
+      strs << type << " * " << TensorMember(t.first) << " = fTensor_" + t.first + ";\n";
    } else {
       strs << "std::vector<" << type << "> fTensor_" << t.first << " = ";
       if (sameData)
@@ -722,7 +796,7 @@ std::string GenerateConstantTensorCode(const std::pair<std::string, InitializedT
       else {
          strs << ConvertValuesToString(length, data) << ";\n";
       }
-      strs << type << " * tensor_" + t.first + " = fTensor_" + t.first + ".data();\n";
+      strs << type << " * " << TensorMember(t.first) << " = fTensor_" + t.first + ".data();\n";
    }
    return strs.str();
 }
@@ -735,22 +809,42 @@ void RModel::GenerateInitializedTensorInfo()
    // here are constant tensor or initialized ones which are not weights (e.g. int64_t tensors )
    for (auto &i : fInitializedTensors) {
       if (i.second.IsNotWritable())  continue;
-      if (!fUseWeightFile || i.second.IsConstantTensor() || !i.second.IsWeightTensor() ) {
+      size_t length = ConvertShapeToLength(i.second.shape());
+      if (!fUseWeightFile || i.second.IsConstantTensor() || !i.second.IsWeightTensor() || i.second.type() != ETensorType::FLOAT ) {
          if (i.second.type() == ETensorType::FLOAT) {
+            // check if NaN of Inf are inside tensor data
+            bool hasInfOrNaN = false;
+            const float *data = i.second.data<float>();
+            for (size_t idx = 0; idx < length; idx++) {
+               if (std::is_floating_point<float>::value) {
+                  if (std::isinf(data[idx]) || std::isnan(data[idx])) {
+                     hasInfOrNaN = true;
+                     break;
+                  }
+               }
+            }
+            if (hasInfOrNaN)
+               AddNeededStdLib("limits");
             fGC += GenerateConstantTensorCode<float>(i);
-            fConstantTensorSize += ConvertShapeToLength(i.second.shape()) * 4;
+            fConstantTensorSize += length * sizeof(float);
          } else if (i.second.type() == ETensorType::INT64) {
             fGC += GenerateConstantTensorCode<int64_t>(i);
-            fConstantTensorSize += ConvertShapeToLength(i.second.shape()) * 8;
+            fConstantTensorSize += length * sizeof(int64_t);
+         } else if (i.second.type() == ETensorType::INT32) {
+            fGC += GenerateConstantTensorCode<int32_t>(i);
+            fConstantTensorSize += length * sizeof(int32_t);
+         }  else if (i.second.type() == ETensorType::BOOL || i.second.type() == ETensorType::UINT8 ) {
+            fGC += GenerateConstantTensorCode<uint8_t>(i);
+            fConstantTensorSize += length * sizeof(uint8_t);
          }
+
 
       } else {
          // case of tensors which are read from a file
-         size_t length = ConvertShapeToLength(i.second.shape());
          if (i.second.type() == ETensorType::FLOAT) {
             fGC += "std::vector<float> fTensor_" + i.first + " = std::vector<float>(" + std::to_string(length) + ");\n";
-            fGC += "float * tensor_" + i.first + " = fTensor_" + i.first + ".data();\n";
-            fWeightsTensorSize += ConvertShapeToLength(i.second.shape()) * 4;
+            fGC += "float * " + TensorMember(i.first) + " = fTensor_" + i.first + ".data();\n";
+            fWeightsTensorSize += length * sizeof(float);
          }
       }
    }
@@ -774,7 +868,7 @@ void RModel::GenerateIntermediateTensorInfo() {
          bool  is_alias = (IsAliasTensor(i.first));
          if (i.second.type == ETensorType::BOOL && !is_alias) {
                tensor_declaration_block += "std::vector<std::uint8_t> fTensor_" + i.first + " = std::vector<std::uint8_t>(" + std::to_string(ConvertShapeToLength(i.second.shape)) + ");\n";
-               tensor_declaration_block += "std::uint8_t * tensor_" + i.first + " = fTensor_" + i.first + ".data();\n";
+               tensor_declaration_block += "std::uint8_t * " + TensorMember(i.first) + " = fTensor_" + i.first + ".data();\n";
                continue;
          }
          bool is_extended = (fOptimizationLevel == OptimizationLevel::kExtended);
@@ -788,22 +882,22 @@ void RModel::GenerateIntermediateTensorInfo() {
 
             if (i.second.type == ETensorType::FLOAT) {
                tensor_declaration_block += "std::vector<float> fTensor_" + i.first + " = std::vector<float>(" + std::to_string(length) + ");\n";
-               tensor_declaration_block += "float * tensor_" + i.first + " = fTensor_" + i.first + ".data();\n";
+               tensor_declaration_block += "float * " + TensorMember(i.first) + " = fTensor_" + i.first + ".data();\n";
                fOtherTensorSize += 4 * length;
             }
             else if (i.second.type == ETensorType::DOUBLE) {
                tensor_declaration_block += "std::vector<double> fTensor_" + i.first + " = std::vector<double>(" + std::to_string(length) + ");\n";
-               tensor_declaration_block += "double * tensor_" + i.first + " = fTensor_" + i.first + ".data();\n";
+               tensor_declaration_block += "double * " + TensorMember(i.first) + " = fTensor_" + i.first + ".data();\n";
                fOtherTensorSize += 8 * length;
             }
             else if (i.second.type == ETensorType::INT64) {
                tensor_declaration_block += "std::vector<int64_t> fTensor_" + i.first + " = std::vector<int64_t>(" + std::to_string(length) + ");\n";
-               tensor_declaration_block += "int64_t * tensor_" + i.first + " = fTensor_" + i.first + ".data();\n";
+               tensor_declaration_block += "int64_t * " + TensorMember(i.first) + " = fTensor_" + i.first + ".data();\n";
                fOtherTensorSize += 8 * length;
             }
          }
          if (is_alias) {
-             tensor_declaration_block += ConvertTypeToString(i.second.type) + " * tensor_" + i.first + " = nullptr;\n";
+             tensor_declaration_block += ConvertTypeToString(i.second.type) + " * " + TensorMember(i.first) + " = nullptr;\n";
          }
 
       }
@@ -816,7 +910,7 @@ void RModel::GenerateIntermediateTensorInfo() {
    if (!fDynamicTensorInfos.empty()) {
       fGC += "//--- declare the dynamic tensors\n";
       for (auto &i : fDynamicTensorInfos) {
-         fGC += ConvertTypeToString(i.second.type) + " * tensor_" + i.first + " = nullptr;\n";
+         fGC += ConvertTypeToString(i.second.type) + " * " + TensorMember(i.first) + " = nullptr;\n";
       }
       fGC += "//--- dynamic tensors pool\n";
       fGC += "std::vector<char> fDynamicMemoryPool;\n";
@@ -862,9 +956,10 @@ void RModel::GenerateDynamicTensorInfo()
             auto op_ptr = op.get();
             std::cout << "Looping on operator " << op_index << "   " << typeid(*op_ptr).name() << std::endl;
          }
-         // check if is a dynamic tensor and not an alias tensor
+         // check if is a dynamic tensor and not an alias tensor or output tensor
          std::string name = std::string(it);
-         if ( fDynamicTensorInfos.find(name) != fDynamicTensorInfos.end() && !IsAliasTensor(name)) {
+         if ( fDynamicTensorInfos.find(name) != fDynamicTensorInfos.end() && !IsAliasTensor(name)
+              && std::find(fOutputTensorNames.begin(), fOutputTensorNames.end(), name) == fOutputTensorNames.end()) {
             auto tensor_size =  ConvertDimShapeToLength(GetDimTensorShape(name));
             auto type = GetTensorType(name);
             size_t type_size = GetTypeSize(type);
@@ -901,6 +996,7 @@ void RModel::GenerateDynamicTensorInfo()
    bool missingTensor = false;
    for (auto &i : fDynamicTensorInfos) {
       if (IsAliasTensor(i.first)) continue;
+      if (std::find(fOutputTensorNames.begin(), fOutputTensorNames.end(), i.first) != fOutputTensorNames.end()) continue;
       if (std::find(tensors.begin(), tensors.end(), std::pair<std::string,ETensorType>{i.first, i.second.type}) == tensors.end()) {
          std::cout << "Dynamic tensors " << i.first << " is not in list of operator input/output " << std::endl;
          missingTensor = true;
@@ -910,6 +1006,83 @@ void RModel::GenerateDynamicTensorInfo()
       throw std::runtime_error("TMVA-SOFIE: RModel::GenerateDynamicTensorInfo - some tensors are not in input/output list");
 
    fGC += out.str();
+}
+
+/// Check if a given parameter is used for the shape of an input tensor.
+bool RModel::IsInputTensorShapeParam(std::string const &paramName) const
+{
+   for (auto &name : fInputTensorNames) {
+      if (IsDimInputTensor(name)) {
+         auto shape = GetDynamicTensorShape(name);
+         for (auto &d : shape) {
+            if (d.param == paramName)
+               return true;
+         }
+      }
+   }
+   return false;
+}
+
+/// Collects all identifiers starting with "tensor_" in the input code,
+/// provided that the occurrence is not immediately preceded by a
+/// character that is valid in a C++ identifier. Excludes input and output tensor names.
+/// Returns a deduplicated std::vector<std::string>.
+std::vector<std::string> RModel::CollectTensorMemberNames(const std::string &input)
+{
+   const std::string target = "tensor_";
+
+   std::vector<std::string> result;
+
+   for (size_t i = 0; i < input.size();) {
+
+      bool doCollect = false;
+
+      if (i + target.size() <= input.size() && input.compare(i, target.size(), target) == 0 &&
+          (i == 0 || !IsIdentifierChar(input[i - 1]))) {
+
+         doCollect = true;
+
+         std::size_t j = i + target.size();
+
+         // Extend to full identifier
+         while (j < input.size() && IsIdentifierChar(input[j]))
+            ++j;
+
+         std::string fullName = input.substr(i, j - i);
+
+         // Exclude input tensor names
+         for (std::string const &name : fInputTensorNames) {
+            if (fullName == target + name) {
+               doCollect = false;
+               break;
+            }
+         }
+
+         // Exclude output tensor names
+         if (doCollect) {
+            for (std::string const &name : fOutputTensorNames) {
+               if (fullName == target + name) {
+                  doCollect = false;
+                  break;
+               }
+            }
+         }
+
+         if (doCollect) {
+            result.push_back(fullName);
+         }
+
+         i = j; // advance past the identifier
+      } else {
+         ++i;
+      }
+   }
+
+   // Deduplicate (order not preserved)
+   std::sort(result.begin(), result.end());
+   result.erase(std::unique(result.begin(), result.end()), result.end());
+
+   return result;
 }
 
 std::string RModel::GenerateInferSignature(bool isdecl) {
@@ -956,6 +1129,15 @@ std::string typeForOutput(ETensorType t) {
    return ConvertTypeToString(t);
 }
 
+std::string memberNameForDimShape(std::string name)
+{
+   if (!name.empty()) {
+      name[0] = std::toupper(static_cast<unsigned char>(name[0]));
+   }
+   name = "f" + name;
+   return name;
+}
+
 }
 
 void RModel::GenerateOutput()
@@ -995,13 +1177,74 @@ void RModel::GenerateOutput()
    if (!doInferArgs.empty())
       doInferArgs += ",";
    for (std::string const &name : fOutputTensorNames) {
-      fGC += SP + "std::vector<" + typeForOutput(GetTensorType(name)) + " > output_tensor_" + name + ";\n";
-      doInferArgs += " output_tensor_" + name + ",";
+      bool isDynamic = fDynamicTensorInfos.count(name) > 0;
+      std::string n;
+      if(!isDynamic) {
+         n = std::to_string(ConvertShapeToLength(GetTensorShape(name)));
+      } else {
+         std::string dimLen = ConvertDimShapeToLength(GetDynamicTensorShape(name));
+         // Use the session member (fXxx) when any dim is a runtime-computed identifier
+         // (e.g. NonZero count). For expression-type dims derived from input shapes
+         // (e.g. "((W+-3)/2+1)"), use the expression directly.
+         // for input shape parameters we don't need to use the session member since it is passed as argument to the infer function and it is not a runtime computed value
+         bool hasRuntimeParam = false;
+         for (auto const &dim : GetDynamicTensorShape(name)) {
+            if (dim.isParam && IsIdentifier(dim.param) && !IsInputTensorShapeParam(dim.param))
+               hasRuntimeParam = true;
+         }
+         n = hasRuntimeParam ? memberNameForDimShape(dimLen) : dimLen;
+      }
+      std::string outputName = "output_tensor_" + name;
+      fGC += SP + "std::vector<" + typeForOutput(GetTensorType(name)) + " > " + outputName + "(" + n + ");\n";
+      doInferArgs += " " + outputName + ".data(),";
+      if(isDynamic) {
+         for (auto const &dim : GetDynamicTensorShape(name)) {
+            if (dim.isParam && !IsInputTensorShapeParam(dim.param) && IsIdentifier(dim.param)) {
+               fGC += SP + "size_t " + dim.param + " = 0;\n";
+               doInferArgs += " " + dim.param + ",";
+            }
+         }
+      }
    }
    if (!doInferArgs.empty())
       doInferArgs.back() = ' ';
 
-   fGC += SP + "doInfer(" + doInferArgs + ");\n";
+   // verifying if the dynamic parameters are within allowed range
+   std::unordered_set<std::string> input_params_checked;
+   std::string dynamic_parameters_check = "";
+   for (auto &name : fInputTensorNames) {
+      if (IsDimInputTensor(name)) {
+         auto shape = GetDynamicTensorShape(name);
+         for (auto &d : shape) {
+            std::string pName = d.param;
+            if (d.isParam && input_params_checked.count(pName) == 0) {
+               std::string memberName = memberNameForDimShape(d.param);
+               dynamic_parameters_check += d.param + " > " + memberName + " || ";
+               input_params_checked.insert(pName);
+               fGC += SP + "if (" + d.param + " > " + memberName + ") {\n";
+               fGC += SP + SP + "throw std::runtime_error(\"TMVA-SOFIE: dynamic input tensor shape parameter " +
+                      d.param + " exceeds the initialized maximum allowed shape.\");\n";
+               fGC += SP + "}\n";
+            }
+         }
+      }
+   }
+
+   if (fUseSession) {
+      fGC += SP + "doInfer(*this, " + doInferArgs + ");\n";
+   } else {
+      fGC += SP + "doInfer(" + doInferArgs + ");\n";
+   }
+
+   // If the output tensors have dynamic sizes, now is the time to set them
+   for (std::string const &name : fOutputTensorNames) {
+      bool isDynamic = fDynamicTensorInfos.count(name) > 0;
+      if (isDynamic) {
+         std::string outputName = "output_tensor_" + name;
+         auto tensor_size = ConvertDimShapeToLength(GetDimTensorShape(name));
+         fGC += SP + outputName + ".resize(" + tensor_size + ");\n";
+      }
+   }
 
    fGC += SP + "return {";
    for (size_t i = 0; i < fOutputTensorNames.size(); i++) {
@@ -1015,23 +1258,43 @@ void RModel::GenerateOutput()
 
 void RModel::GenerateSessionCode()
 {
+   std::string sessionName = !fIsSubGraph ? "Session" : "Session_" + fName;
+
+   if (fUseSession && !fIsGNNComponent) {
+      //  forward declare session struct
+      fGC += "struct " + sessionName + ";\n";
+   }
+
    // Determine the signature of the actual inference function
    std::string doInferSignature = GenerateInferSignature();
    if (!doInferSignature.empty())
       doInferSignature += ", ";
    for (auto const &name : fOutputTensorNames) {
-      doInferSignature += " std::vector<" + typeForOutput(GetTensorType(name)) + "> &output_tensor_" + name + ",";
+      bool isDynamic = fDynamicTensorInfos.count(name) > 0;
+      doInferSignature += typeForOutput(GetTensorType(name)) + " *tensor_" + name + ",";
+      if(isDynamic) {
+         for (auto const &dim : GetDynamicTensorShape(name)) {
+            if (dim.isParam && !IsInputTensorShapeParam(dim.param) && IsIdentifier(dim.param))
+               doInferSignature += " size_t &" + dim.param + "_output,";
+         }
+      }
    }
    doInferSignature.back() = ' ';
 
-   doInferSignature = "void doInfer(" + doInferSignature + ")";
+   if (fUseSession) {
+      doInferSignature = sessionName + " const &session, " + doInferSignature;
+   }
+
+   doInferSignature = "inline void doInfer(" + doInferSignature + ")";
+
+   if (!fIsGNNComponent) {
+      // forward declare inference implementation
+      fGC += doInferSignature + ";\n";
+   }
 
    // define the Session struct (for GNN this is generated in RModel_GNN)
    if (fUseSession && !fIsGNNComponent) {
-      if (!fIsSubGraph)
-         fGC += "struct Session {\n";
-      else
-         fGC += "struct Session_" + fName + " {\n";
+      fGC += "struct " + sessionName + " {\n";
    }
 
    // generate code for declaring the initialized tensors
@@ -1068,7 +1331,15 @@ void RModel::GenerateSessionCode()
    // generate code for declarations of some specific operators
    GenerateOperatorDeclarations();
 
-
+   // storing the parameters for future checking to avoid mismatches
+   if (!fDimShapeNames.empty()) {
+      fGC += "\n//   dynamic shape parameters\n";
+      auto dimShapeNames = fDimShapeNames;
+      std::sort(dimShapeNames.begin(), dimShapeNames.end());
+      for (const auto &p : dimShapeNames) {
+         fGC += "size_t " + memberNameForDimShape(p) + ";\n";
+      }
+   }
 
    // add subgraph session
    if (!fSubGraphs.empty()) fGC += "//   subgraph sessions\n";
@@ -1078,9 +1349,6 @@ void RModel::GenerateSessionCode()
 
    // Generate code for Session constructor
    if (fUseSession) {
-      std::string sessionName = "Session";
-      if (fIsSubGraph)
-         sessionName += "_" + fName;
       // add here specific operator code that needs to define session data members
       fGC += "\n";
       for (size_t id = 0; id < fOperators.size(); id++) {
@@ -1106,14 +1374,24 @@ void RModel::GenerateSessionCode()
       // add initialization of shape parameters
       // assume all parameters are of type size_t
       if (!fDimShapeNames.empty()) {
-         // sort first the shape parameters in alphabetical order to avoid a random order
-         std::sort(fDimShapeNames.begin(), fDimShapeNames.end() );
+         // need to use same order as in infer function not alphabetical one
          for (auto &p : fDimShapeNames) {
             fGC += ",\n";
             fGC += "        size_t " + p + " = " + fShapeParams[p];
          }
       }
       fGC += ") {\n";
+
+      // initializing dynamic parameters
+      if (!fDimShapeNames.empty()) {
+         fGC += "\n\n";
+         std::sort(fDimShapeNames.begin(), fDimShapeNames.end());
+         for (const auto &p : fDimShapeNames) {
+            fGC += "   " + memberNameForDimShape(p) + " = " + p + ";\n";
+         }
+      }
+      // add some extra code needed for initialization of dynamic parameters
+      fGC += fExtraCodeForDimShapes;
 
       if (fUseWeightFile) {
          fGC += "\n//--- reading weights from file\n";
@@ -1133,7 +1411,17 @@ void RModel::GenerateSessionCode()
       fGC += "}\n\n";
    }
 
-   fGC += doInferSignature + "{\n";
+   // generate the inference overload that returns an output struct
+   GenerateOutput();
+
+   // end of session
+   if (fUseSession && !fIsGNNComponent) {
+      fGC += "};   // end of Session\n\n";
+
+      GenerateRequiredInputTensorInfo();
+   }
+
+   fGC += doInferSignature + " {\n";
    fGC += "\n";
 
    // generate the inference code
@@ -1143,32 +1431,47 @@ void RModel::GenerateSessionCode()
    if (fOutputTensorNames.size() == 0)
       throw std::runtime_error("TMVA-SOFIE: output size=0 are not supported");
 
+   std::string allOperatorCode;
+
    for (size_t op_idx = 0; op_idx < fOperators.size(); ++op_idx) {
       if (fVerbose)
          std::cout << "Generating code for operator .... " << op_idx << std::endl;
-      fGC += (fOperators[op_idx]->Generate(std::to_string(op_idx)));
+      std::string operatorCode = fOperators[op_idx]->Generate(std::to_string(op_idx));
+      allOperatorCode += operatorCode;
    }
 
-   fGC += SP + "using TMVA::Experimental::SOFIE::UTILITY::FillOutput;\n\n";
+   // If the generated code users members of the session struct, use the
+   // local variable name that we're using for the session:
+   ReplaceAll(allOperatorCode, "this->", "session.");
 
-   for (std::string const &name : fOutputTensorNames) {
-      // need to check is size is the same (don't want to return a vector with
-      // larger size) in that case better to copy
-      bool isIntermediate = fIntermediateTensorInfos.count(name) > 0;
-      std::string n = isIntermediate ? std::to_string(ConvertShapeToLength(GetTensorShape(name)))
-                                     : ConvertDimShapeToLength(GetDimTensorShape(name));
-      fGC += SP + "FillOutput(tensor_" + name + ", output_tensor_" + name + ", " + n + ");\n";
-   }
-
-   fGC += "}\n\n";
-
-   // generate the inference overload that returns an output struct
-   GenerateOutput();
-
-   // end of session
    if (fUseSession && !fIsGNNComponent) {
-      fGC += "};   // end of Session\n\n";
+      // Collect all "tensor_*" data members that are not input or output tensors
+      std::vector<std::string> tensorMemberNames = CollectTensorMemberNames(allOperatorCode);
+      for (auto const& name: tensorMemberNames) {
+         fGC += "    auto &" + name + " = session." + name + ";\n";
+      }
+      fGC += "\n";
    }
+
+   fGC += allOperatorCode;
+
+   for (auto const& name: fOutputTensorNames) {
+      bool isDynamic = fDynamicTensorInfos.count(name) > 0;
+      if(isDynamic) {
+         for (auto const &dim : GetDynamicTensorShape(name)) {
+            if (dim.isParam && !IsInputTensorShapeParam(dim.param) && IsIdentifier(dim.param))
+               fGC += "   " + dim.param + "_output = " + dim.param + ";\n";
+         }
+      }
+      if(IsConstantTensor(name)) {
+         std::string t = "session.tensor_" + name;
+         size_t length = ConvertShapeToLength(fInitializedTensors[name].shape());
+         fGC += "    std::copy(" + t + ", " + t + " + " + std::to_string(length) + ", tensor_" + name + ");\n";
+      }
+   }
+   fGC += "\n";
+
+   fGC += "}\n";
 }
 
 void RModel::Generate(std::underlying_type_t<Options> options, int batchSize, long pos, bool verbose)
@@ -1299,7 +1602,7 @@ void RModel::ReadInitializedTensorsFromFile(long pos) {
                fGC += "      fTensor_" + i.first + " = *reinterpret_cast<std::vector<int64_t>*>(rootFile->Get(\"";
                fGC += dirName + "/" + tensor_name + "\"));\n";
             } else {
-               std::runtime_error("tmva-sofie tensor " + tensor_name + " with type " + ConvertTypeToString(i.second.type()) + " cannot be read from a ROOT file");
+               throw std::runtime_error("tmva-sofie tensor " + tensor_name + " with type " + ConvertTypeToString(i.second.type()) + " cannot be read from a ROOT file");
             }
             fGC += "  }\n";
         }
@@ -1367,7 +1670,7 @@ long RModel::WriteInitializedTensorsToFile(std::string filename) {
                outputDir->WriteObjectAny(&tensorDataVector, "std::vector<int64_t>", tensorName.c_str());
             }
             else {
-               std::runtime_error("tmva-sofie tensor " + tensorName + " with type " + ConvertTypeToString(item.second.type()) +
+               throw std::runtime_error("tmva-sofie tensor " + tensorName + " with type " + ConvertTypeToString(item.second.type()) +
                                   " cannot be written to a ROOT file");
             }
         }
@@ -1404,7 +1707,13 @@ long RModel::WriteInitializedTensorsToFile(std::string filename) {
                   // round to zero sub-normal values
                   float value = data[idx];
                   if (value != 0. && std::abs(value) < std::numeric_limits<float>::min() ) value = 0;
-                  f << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
+                  // handle non-finite values explicitly
+                  if (std::isinf(value))
+                     f << (value > 0 ? "inf" : "-inf");
+                  else if (std::isnan(value))
+                     f << "nan";
+                  else
+                     f << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
                   f <<  ( (idx < length-1) ? " " : "\n" );
                }
             }
@@ -1412,7 +1721,7 @@ long RModel::WriteInitializedTensorsToFile(std::string filename) {
                throw std::runtime_error("tmva-sofie tensor " + tensor_name + " with type " + ConvertTypeToString(i.second.type()) + " cannot be written to a file");
             }
             if (f.fail())
-               std::runtime_error("tmva-sofie failed to write tensor data to file for  " + tensor_name);
+               throw std::runtime_error("tmva-sofie failed to write tensor data to file for  " + tensor_name);
         }
         long curr_pos = f.tellp();
         f.close();
@@ -1420,6 +1729,103 @@ long RModel::WriteInitializedTensorsToFile(std::string filename) {
     } else {
         return -1;
     }
+}
+
+void RModel::PrintSummary() const {
+   std::cout << "Summary of model " << GetName() << std::endl;
+   for(size_t op_idx = 0; op_idx < fOperators.size(); ++op_idx){
+      auto& r = *fOperators[op_idx].get();
+      std::string raw_name =  typeid(r).name();
+      // look for ROperator_NAME
+      std::string name = raw_name.substr(raw_name.find("ROperator_")+10, raw_name.size());
+      std::cout <<  op_idx << "  " << name << "  :  ";
+      for (auto & t_in : r.GetOpInputTensors()) std::cout << t_in << "  ";
+      std::cout << " ----> ";
+      for (auto & t_out : r.GetOpOutputTensors()) std::cout << t_out << "  ";
+      std::cout << std::endl;
+   }
+}
+
+/// To emit the dimensions of the input tensors as a data member of a session,
+/// which is helpful when validating the inference inputs.
+void RModel::GenerateRequiredInputTensorInfo()
+{
+   fGC += "\n// Input tensor dimensions\n";
+   fGC += "using TMVA::Experimental::SOFIE::SingleDim;\n";
+   fGC += "using TMVA::Experimental::SOFIE::TensorDims;\n";
+   fGC += "using TMVA::Experimental::SOFIE::makeDims;\n\n";
+   bool hasDynamicInputTensors = false;
+
+   for (std::size_t iInput = 0; iInput < fInputTensorNames.size(); ++iInput) {
+      auto const &name = fInputTensorNames[iInput];
+      if (IsDimInputTensor(name)) {
+         hasDynamicInputTensors = true;
+      }
+      std::vector<Dim> shape = GetDimTensorShape(name);
+      fGC += "constexpr std::array<SingleDim, " + std::to_string(shape.size()) + "> dim_" + name + "{";
+      for (std::size_t iDim = 0; iDim < shape.size(); ++iDim) {
+         auto const &dim = shape[iDim];
+         if (dim.isParam) {
+            fGC += "SingleDim{\"" + dim.GetVal() + "\"}";
+         } else {
+            fGC += "SingleDim{" + dim.GetVal() + "}";
+         }
+         if (iDim != shape.size() - 1) {
+            fGC += ", ";
+         }
+      }
+      fGC += "};\n";
+   }
+   fGC += "\nconstexpr std::array<TensorDims, " + std::to_string(fInputTensorNames.size()) + "> inputTensorDims{\n";
+   for (std::size_t iInput = 0; iInput < fInputTensorNames.size(); ++iInput) {
+      auto const &name = fInputTensorNames[iInput];
+      fGC += SP + "makeDims(dim_" + name + ")";
+      if (iInput == fInputTensorNames.size() - 1) {
+         fGC += "\n";
+      } else {
+         fGC += ",\n";
+      }
+   }
+   fGC += "};\n";
+
+   fGC +=
+      "\nconstexpr bool hasDynamicInputTensors{" + std::string{hasDynamicInputTensors ? "true" : "false"} + "};\n\n";
+
+   fGC += "\n// Output tensor dimensions\n";
+   bool hasDynamicOutputTensors = false;
+   for (std::size_t iOutput = 0; iOutput < fOutputTensorNames.size(); ++iOutput) {
+      auto const &name = fOutputTensorNames[iOutput];
+      if (IsDynamicTensor(name)) {
+         hasDynamicOutputTensors = true;
+      }
+      std::vector<Dim> shape = GetDimTensorShape(name);
+      fGC += "constexpr std::array<SingleDim, " + std::to_string(shape.size()) + "> dim_" + name + "{";
+      for (std::size_t iDim = 0; iDim < shape.size(); ++iDim) {
+         auto const &dim = shape[iDim];
+         if (dim.isParam) {
+            fGC += "SingleDim{\"" + dim.GetVal() + "\"}";
+         } else {
+            fGC += "SingleDim{" + dim.GetVal() + "}";
+         }
+         if (iDim != shape.size() - 1) {
+            fGC += ", ";
+         }
+      }
+      fGC += "};\n";
+   }
+   fGC += "\nconstexpr std::array<TensorDims, " + std::to_string(fOutputTensorNames.size()) + "> outputTensorDims{\n";
+   for (std::size_t iOutput = 0; iOutput < fOutputTensorNames.size(); ++iOutput) {
+      auto const &name = fOutputTensorNames[iOutput];
+      fGC += SP + "makeDims(dim_" + name + ")";
+      if (iOutput == fOutputTensorNames.size() - 1) {
+         fGC += "\n";
+      } else {
+         fGC += ",\n";
+      }
+   }
+   fGC += "};\n";
+   fGC +=
+      "\nconstexpr bool hasDynamicOutputTensors{" + std::string{hasDynamicOutputTensors ? "true" : "false"} + "};\n\n";
 }
 
 void RModel::PrintRequiredInputTensors() const {
@@ -1464,7 +1870,7 @@ void RModel::PrintInitializedTensors() const {
         }
         std::cout << "]";
         if (it.second.IsConstantTensor()) std::cout << " (Constant)";
-        else if (!it.second.IsWeightTensor()) std::cout << " (Not Writable)";
+        if (it.second.IsNotWritable()) std::cout << " (Not Writable)";
         std::cout << std::endl;
     }
     std::cout << "\n";
@@ -1506,7 +1912,7 @@ void RModel::PrintOutputTensors() const {
         std::cout << "Tensor name: \"" << it << "\"\t";
         try {
          auto shape = GetDimTensorShape(it);
-         std::cout << "with shape: " << ConvertShapeToString(shape) << std::endl;
+         std::cout << "with shape: " << ConvertDimShapeToString(shape) << std::endl;
         } catch (...) {
           std::cout << "with shape not yet defined" << std::endl;
         }
@@ -1587,6 +1993,4 @@ void RModel::Streamer(TBuffer &R__b) {
     }
 }
 
-}//SOFIE
-}//Experimental
-}//TMVA
+} // namespace SOFIE::Experimental::TMVA

@@ -629,10 +629,7 @@ std::map<TString,Double_t>  TMVA::MethodBase::OptimizeTuningParameters(TString /
          << GetName() << Endl;
    Log() << kWARNING <<Form("Dataset[%s] : ",DataInfo().GetName())<< "Currently we need to set hardcoded which parameter is tuned in which ranges"<<Endl;
 
-   std::map<TString,Double_t> tunedParameters;
-   tunedParameters.size(); // just to get rid of "unused" warning
-   return tunedParameters;
-
+   return std::map<TString,Double_t>();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1461,12 +1458,9 @@ void TMVA::MethodBase::WriteStateToXML( void* parent ) const
 
 void TMVA::MethodBase::ReadStateFromStream( TFile& rf )
 {
-   Bool_t addDirStatus = TH1::AddDirectoryStatus();
-   TH1::AddDirectory( 0 ); // this avoids the binding of the hists in PDF to the current ROOT file
+   TDirectory::TContext dirCtx{nullptr}; // Don't register histograms to current directory
    fMVAPdfS = (TMVA::PDF*)rf.Get( "MVA_PDF_Signal" );
    fMVAPdfB = (TMVA::PDF*)rf.Get( "MVA_PDF_Background" );
-
-   TH1::AddDirectory( addDirStatus );
 
    ReadWeightsFromStream( rf );
 

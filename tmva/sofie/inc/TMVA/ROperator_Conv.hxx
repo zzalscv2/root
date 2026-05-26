@@ -137,28 +137,37 @@ public:
                           k2 + (fAttrDilations[1] - 1) * (k2 - 1),
                           k3 + (fAttrDilations[2] - 1) * (k3 - 1)};
 
+      if (fAttrStrides.empty()) {
+         fAttrStrides = {1, 1, 1};
+      }
+      if (fDim < 3)
+         fAttrStrides.resize(3, 1);
+
       if (fAttrAutopad == "NOTSET") {
          if (fAttrPads.empty()) {
             fAttrPads = {1, 1, 1, 1, 1, 1};
          }
       } else if (fAttrAutopad == "SAME_UPPER" || fAttrAutopad == "SAME_LOWER") {
-         if (fDim == 1)
-            fAttrPads = {fAttrKernelShape[0] / 2, fAttrKernelShape[0] / 2};
-         else if (fDim == 2)
-            fAttrPads = {fAttrKernelShape[0] / 2, fAttrKernelShape[1] / 2, fAttrKernelShape[0] / 2, fAttrKernelShape[1] / 2};
-         else if (fDim == 3)
-            fAttrPads = {fAttrKernelShape[0] / 2, fAttrKernelShape[1] / 2, fAttrKernelShape[2] / 2,
-                         fAttrKernelShape[0] / 2, fAttrKernelShape[1] / 2, fAttrKernelShape[2] / 2};
-         // add extra padding at beginning or end (depending if SAME_UPPER or SAME_LOWER)
-         // need to check this!
-         if (fAttrKernelShape[0] % 2 == 1) {
-            (fAttrAutopad == "SAME_UPPER") ? fAttrPads[0]++ : fAttrPads[i1]++;
+         for (size_t d = 0; d < fDim; ++d) {
+            if (input[d + 2].isParam)
+               throw std::runtime_error(
+                  "TMVA SOFIE Conv Op: SAME padding with parametric input shape is not supported");
          }
-         if (fDim > 1 && fAttrKernelShape[1] % 2 == 1) {
-            (fAttrAutopad == "SAME_UPPER") ? fAttrPads[1]++ : fAttrPads[i2]++;
-         }
-         if (fDim > 2 && fAttrKernelShape[2] % 2 == 1) {
-            (fAttrAutopad == "SAME_UPPER") ? fAttrPads[2]++ : fAttrPads[i3]++;
+         // ONNX SAME padding: total_pad = max(0, (ceil(in/stride)-1)*stride + kernel - in)
+         // SAME_UPPER places extra padding at end, SAME_LOWER at beginning
+         fAttrPads.assign(6, 0);
+         for (size_t d = 0; d < fDim; ++d) {
+            size_t inSize = input[d + 2].dim;
+            size_t stride_d = fAttrStrides[d];
+            size_t outSize = (inSize + stride_d - 1) / stride_d;
+            int totalPad = std::max(0, (int)((outSize - 1) * stride_d + fAttrKernelShape[d]) - (int)inSize);
+            if (fAttrAutopad == "SAME_UPPER") {
+               fAttrPads[d] = (size_t)(totalPad / 2);
+               fAttrPads[d + fDim] = (size_t)(totalPad - totalPad / 2);
+            } else {
+               fAttrPads[d] = (size_t)(totalPad - totalPad / 2);
+               fAttrPads[d + fDim] = (size_t)(totalPad / 2);
+            }
          }
       } else if (fAttrAutopad != "VALID") {
          throw
@@ -166,13 +175,6 @@ public:
       }
       // to be sure pad is vector of size 6
       if (fDim < 3) fAttrPads.resize(6, 0);
-
-      if (fAttrStrides.empty()) {
-         fAttrStrides = {1, 1, 1};
-      }
-      if (fDim < 3)
-         fAttrStrides.resize(3, 1);
-
 
       Dim input1 = input[2];
       Dim input2 = (fDim > 1) ? input[3] : Dim{1};
@@ -198,12 +200,12 @@ public:
                }
             } else { // general case (stride not 1)
                int64_t v =  pad - kernel;
-               std::string outStr = "((" + inputDim.param + "+" + std::to_string(v) + ")/"
-                                 + std::to_string(stride) + "1)";
+               std::string outStr =
+                  "((" + inputDim.param + "+" + std::to_string(v) + ")/" + std::to_string(stride) + "+1)";
                return Dim{ outStr, static_cast<size_t>(-1)};
             }
          }
-         std::runtime_error("TMVA SOFIE Conv Op -  invalid values");
+         throw std::runtime_error("TMVA SOFIE Conv Op -  invalid values");
          return Dim{};
       };
 
@@ -241,7 +243,7 @@ public:
       }
       fShapeX = model.GetDimTensorShape(fNX);
       if (fShapeX.size() < 3 || fShapeX.size()  > 5) {
-         std::cout << fNX << " : " << ConvertShapeToString(fShapeX) << std::endl;
+         std::cout << fNX << " : " << ConvertDimShapeToString(fShapeX) << std::endl;
          throw
             std::runtime_error("TMVA SOFIE Conv Op input data tensor" + fNX + " is not of 3,4 or 5 dimensions");
       }
@@ -289,7 +291,7 @@ public:
                shape[0] = fShapeB[0];
                auto intTargetShape = ConvertShapeToInt(targetShape);
                std::shared_ptr<void> new_data_ptr(
-                  UTILITY::UnidirectionalBroadcast<float>(static_cast<float *>(original_data.get()), shape, intTargetShape),
+                  UTILITY::UnidirectionalBroadcast(static_cast<float *>(original_data.get()), shape, intTargetShape),
                   std::default_delete<float[]>());
                model.UpdateInitializedTensor(fNB, model.GetTensorType(fNB), intTargetShape, new_data_ptr);
                fShapeB = model.GetTensorShape(fNB);
@@ -325,8 +327,8 @@ public:
       fInputTensorNames.emplace_back(imcol);
 
       if (model.Verbose()) {
-         std::cout << "Conv - " << fDim << "  " << fNX << " : " << ConvertShapeToString(fShapeX)
-                  << " --> " << fNY << " : " << ConvertShapeToString(fShapeY) << std::endl;
+         std::cout << "Conv - " << fDim << "  " << fNX << " : " << ConvertDimShapeToString(fShapeX)
+                  << " --> " << fNY << " : " << ConvertDimShapeToString(fShapeY) << std::endl;
       }
    }
 
@@ -347,8 +349,8 @@ public:
             out << SP << "if (" << length << " > " << ConvertShapeToLength(shape) << ") {\n";
          else
             out << SP << "{\n";
-         out << SP << SP << "float * data = TMVA::Experimental::SOFIE::UTILITY::UnidirectionalBroadcast<float>(tensor_"
-             << fNB << ", " << ConvertShapeToString(shape) << ", " << ConvertShapeToString(fShapeY) << ");\n";
+         out << SP << SP << "float * data = TMVA::Experimental::SOFIE::UTILITY::UnidirectionalBroadcast(tensor_"
+             << fNB << ", " << ConvertShapeToString(shape) << ", " << ConvertDimShapeToString(fShapeY) << ");\n";
          out << SP << SP << "fTensor_" << fNB << ".resize(" << length << ");\n";
          out << SP << SP << "std::copy(data, data + " << length << ", fTensor_" << fNB << ".begin());\n";
          out << SP << SP << "tensor_" << fNB << " = fTensor_" << fNB << ".data();\n";
@@ -436,7 +438,10 @@ public:
       out << SP << "int " << OpName << "_n = " << fShapeW[0] << ";\n"; // output channels
       out << SP << "int " << OpName << "_k = " << fShapeW[1] * fAttrKernelShape[0] * fAttrKernelShape[1] * fAttrKernelShape[2] << ";\n";
       out << SP << "float " << OpName << "_alpha = 1.0;\n";
-      out << SP << "float " << OpName << "_beta = 0.0;\n";
+      if (fNB != "")
+         out << SP << "float " << OpName << "_beta = 1.0;\n";
+      else // when bias is not present beta needs to be equal to zero to avoid re-using previous results in output tensor
+         out << SP << "float " << OpName << "_beta = 0.0;\n";
 
 
       // Loop on batch size
@@ -509,11 +514,23 @@ public:
                 << "tensor_" << fNX << "_xcol);\n\n ";
          }
          // BLAS
-         out << SP << SP << "BLAS::sgemm_(&" << OpName << "_transA, &" << OpName << "_transB, &" << OpName << "_m, &"
-             << OpName << "_n, &" << OpName << "_k, &" << OpName << "_alpha, " << "tensor_" << fNX << "_xcol, &" << OpName
-             << "_m,\n"; // use m if op_xcol is not transpose , otherwise k
-         out << SP << SP << SP << "tensor_" << fNX << "_f, &" << OpName << "_k, &" << OpName << "_beta, tensor_" << fNY
-             << " + out_offset, &" << OpName << "_m);\n";
+         out << SP << "TMVA::Experimental::SOFIE::Gemm_Call("
+             << "tensor_" << fNY << " + out_offset, false, false, "
+             << OpName << "_m, " << OpName << "_n, " << OpName << "_k, "
+             << OpName << "_alpha, " << "tensor_" << fNX << "_xcol, tensor_" << fNX << "_f, "
+             << OpName << "_beta, ";
+         if (fNB != "")
+            out << "tensor_" << fNB;
+         else
+            out << "nullptr";
+         out << ");\n";
+
+
+         // out << SP << SP << "BLAS::sgemm_(&" << OpName << "_transA, &" << OpName << "_transB, &" << OpName << "_m, &"
+         //     << OpName << "_n, &" << OpName << "_k, &" << OpName << "_alpha, " << "tensor_" << fNX << "_xcol, &" << OpName
+         //     << "_m,\n"; // use m if op_xcol is not transpose , otherwise k
+         // out << SP << SP << SP << "tensor_" << fNX << "_f, &" << OpName << "_k, &" << OpName << "_beta, tensor_" << fNY
+         //     << " + out_offset, &" << OpName << "_m);\n";
       } else {
          // case of group convolution
          // Unroll (IM2COL) the input tensor- make loop on groups and repeat operations (IM2COL + GEMM for each
@@ -522,8 +539,8 @@ public:
          out << SP << SP << "for (size_t g = 0; g < " << fAttrGroup << "; g++) {\n";
          out << SP << SP << "size_t x_offset = n * " << inputBatchStride << " + g * "
              << fShapeW[1] << " * " << inputChannelStride << ";\n ";
-         out << SP << SP << "size_t out_offset = n * " << outputBatchStride << " + g * "
-             << fShapeW[0] << " * (" << outputChannelStride << ") / " << fAttrGroup << ";\n ";
+         out << SP << SP << "size_t g_offset = g * " << fShapeW[0] << " * (" << outputChannelStride << ") / " << fAttrGroup << ";\n ";
+         out << SP << SP << "size_t out_offset = n * " << outputBatchStride << " + g_offset;\n";
 
          if (fDim < 3) {
             out << SP << SP << "TMVA::Experimental::SOFIE::UTILITY::Im2col<float>(tensor_" << fNX
@@ -561,26 +578,38 @@ public:
          out << SP << SP << SP << "size_t offset_f = g * "
              << fShapeW[0] * fShapeW[1] * fAttrKernelShape[0] * fAttrKernelShape[1] * fAttrKernelShape[2] / fAttrGroup
              << ";\n";
-         out << SP << SP << "BLAS::sgemm_(&" << OpName << "_transA, &" << OpName << "_transB, &" << OpName << "_m, &"
-             << OpName << "_n, &" << OpName << "_k, &" << OpName << "_alpha, tensor_" << fNX << "_xcol, &" << OpName
-             << "_m,\n"; // use m if op_xcol is not transpose , otherwise k
-         out << SP << SP << SP << "tensor_" << fNX << "_f + offset_f, &" << OpName << "_k, &" << OpName << "_beta, tensor_" << fNY
-             << " + out_offset"
-             << ", &" << OpName << "_m);\n";
+
+         out << SP << "TMVA::Experimental::SOFIE::Gemm_Call("
+             << "tensor_" << fNY << " + out_offset, false, false, "
+             << OpName << "_m, " << OpName << "_n, " << OpName << "_k, "
+             << OpName << "_alpha, " << "tensor_" << fNX << "_xcol, tensor_" << fNX << "_f + offset_f, "
+             << OpName << "_beta, ";
+         if (fNB != "")
+            out << "tensor_" << fNB << " + g_offset";
+         else
+            out << "nullptr";
+         out << ");\n";
+
+         // out << SP << SP << "BLAS::sgemm_(&" << OpName << "_transA, &" << OpName << "_transB, &" << OpName << "_m, &"
+         //     << OpName << "_n, &" << OpName << "_k, &" << OpName << "_alpha, tensor_" << fNX << "_xcol, &" << OpName
+         //     << "_m,\n"; // use m if op_xcol is not transpose , otherwise k
+         // out << SP << SP << SP << "tensor_" << fNX << "_f + offset_f, &" << OpName << "_k, &" << OpName << "_beta, tensor_" << fNY
+         //     << " + out_offset"
+         //     << ", &" << OpName << "_m);\n";
 
          out << SP << SP << "}\n"; // end of group loop
       }
 
-      if (fNB != "") {
-         out << SP << "int " << OpName << "_size = " << outputBatchStride << ";\n";
-         out << SP << "float " << OpName << "_gamma = 1.0;\n";
-         out << SP << "int " << OpName << "_incx = 1;\n";
-         out << SP << "int " << OpName << "_incy = 1;\n";
+      // if (fNB != "") {
+      //    out << SP << "int " << OpName << "_size = " << outputBatchStride << ";\n";
+      //    out << SP << "float " << OpName << "_gamma = 1.0;\n";
+      //    out << SP << "int " << OpName << "_incx = 1;\n";
+      //    out << SP << "int " << OpName << "_incy = 1;\n";
 
-         out << SP << "BLAS::saxpy_(&" << OpName << "_size, &" << OpName << "_gamma, tensor_" << fNB << ", &"
-             << OpName << "_incx, tensor_" << fNY << " + out_offset, &" << OpName << "_incy);\n";
+      //    out << SP << "BLAS::saxpy_(&" << OpName << "_size, &" << OpName << "_gamma, tensor_" << fNB << ", &"
+      //        << OpName << "_incx, tensor_" << fNY << " + out_offset, &" << OpName << "_incy);\n";
 
-      }
+      // }
       out << SP << "}\n"; // end of batch size loop
 
       return out.str();

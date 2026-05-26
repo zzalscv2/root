@@ -253,7 +253,7 @@ class TestREGRESSION:
         a = cppyy.gbl.CObjA()
         co = cppyy.ll.as_cobject(a)
 
-        assert a == cppyy.bind_object(co, 'CObjA')
+        assert a is cppyy.bind_object(co, 'CObjA')
         assert a.m_int == 42
         assert cppyy.bind_object(co, 'CObjA').m_int == 42
 
@@ -1114,9 +1114,13 @@ class TestREGRESSION:
             len(ai.name) == 6
             assert ai.name[:len(s)] == s
 
-        with warnings.catch_warnings(record=True) as w:
-            ai.name = u'hellowd'
-            assert 'too long' in str(w[-1].message)
+      # isolate the warning configuration
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # turn warnings into errors
+
+            with pytest.raises(RuntimeWarning) as exc:
+                ai.name = u'hellowd'
+            assert 'too long' in str(exc.value)
 
         # vector of objects
         va = cppyy.gbl.std.vector[ns.AxisInformation](N)
@@ -1409,6 +1413,32 @@ class TestREGRESSION:
         (out, err) = capfd.readouterr()
         assert out == ""
         assert err == ""
+
+    @mark.xfail(run=False, condition=IS_WINDOWS == 64, reason="LLVM JIT fails to catch exceptions")
+    def test49_overloads_with_runtime_errors(self):
+        """Regression test for https://github.com/root-project/root/issues/17497
+
+        LLVM JIT failes to catch exceptions on Windows 64bit, so we disable their testing
+        """
+        import cppyy
+
+        std = cppyy.gbl.std
+
+        cppyy.cppdef(
+            r"""
+        void fun(std::string_view, std::string_view){throw std::runtime_error("std::string_view overload");}
+        void fun(std::string_view, const std::vector<std::string> &){throw std::runtime_error("const std::vector<std::string> & overload");}
+        """
+        )
+
+        with raises(std.runtime_error):
+            cppyy.gbl.fun("", [])
+        with raises(std.runtime_error):
+            cppyy.gbl.fun(std.string_view("hello world"), std.vector[std.string]())
+        with raises(std.runtime_error):
+            cppyy.gbl.fun("", std.vector[std.string]())
+        with raises(std.runtime_error):
+            cppyy.gbl.fun(std.string_view("hello world"), [])
 
 
 if __name__ == "__main__":

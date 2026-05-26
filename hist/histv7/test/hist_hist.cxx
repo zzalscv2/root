@@ -1,5 +1,9 @@
 #include "hist_test.hxx"
 
+#include <cstdint>
+#include <iterator>
+#include <random>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include <variant>
@@ -53,6 +57,56 @@ TEST(RHist, Constructor)
    EXPECT_EQ(hist.GetNDimensions(), 2);
    hist = RHist<int>(regularAxis, regularAxis, regularAxis);
    EXPECT_EQ(hist.GetNDimensions(), 3);
+}
+
+TEST(RHist, GetFullMultiDimRange)
+{
+   static constexpr std::size_t Bins = 20;
+   RHist<double> hist(Bins, {0, Bins});
+
+   std::mt19937 gen;
+   std::uniform_real_distribution<double> distX(0, Bins);
+   std::uniform_real_distribution<double> distW(0.8, 1.2);
+   static constexpr std::uint64_t Entries = 1000;
+   for (std::uint64_t i = 0; i < Entries; i++) {
+      hist.Fill(distX(gen), RWeight(distW(gen)));
+   }
+   ASSERT_EQ(hist.GetNEntries(), Entries);
+
+   auto range = hist.GetFullMultiDimRange();
+   EXPECT_EQ(std::distance(range.begin(), range.end()), Bins + 2);
+
+   double sumW = 0;
+   for (auto &&indices : range) {
+      sumW += hist.GetBinContent(indices);
+   }
+   // Numerical differences with EXPECT_DOUBLE_EQ
+   EXPECT_FLOAT_EQ(hist.GetStats().GetSumW(), sumW);
+}
+
+TEST(RHist, SetBinContent)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+
+   {
+      RHist<int> hist(axis);
+      ASSERT_FALSE(hist.GetStats().IsTainted());
+      hist.SetBinContent(RBinIndex(1), 42);
+      EXPECT_EQ(hist.GetBinContent(RBinIndex(1)), 42);
+      EXPECT_TRUE(hist.GetStats().IsTainted());
+      EXPECT_THROW(hist.GetNEntries(), std::logic_error);
+   }
+
+   {
+      RHist<int> hist(axis);
+      ASSERT_FALSE(hist.GetStats().IsTainted());
+      const std::array<RBinIndex, 1> indices = {2};
+      hist.SetBinContent(indices, 42);
+      EXPECT_EQ(hist.GetBinContent(indices), 42);
+      EXPECT_TRUE(hist.GetStats().IsTainted());
+      EXPECT_THROW(hist.GetNEntries(), std::logic_error);
+   }
 }
 
 TEST(RHist, Add)
@@ -109,6 +163,33 @@ TEST(RHist, StressAddAtomic)
 
    EXPECT_EQ(histA.GetNEntries(), NAdds);
    EXPECT_EQ(histA.GetBinContent(0), NAdds);
+}
+
+TEST(RHist, AddExceptionSafety)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis regularAxis(Bins, {0, Bins});
+   const std::vector<std::string> categories = {"a", "b", "c"};
+   const RCategoricalAxis categoricalAxis(categories);
+
+   RHist<int> histA({regularAxis, regularAxis});
+   RHist<int> histB({regularAxis, categoricalAxis});
+
+   histA.Fill(1.5, 2.5);
+   ASSERT_EQ(histA.GetNEntries(), 1);
+   ASSERT_EQ(histA.GetBinContent(RBinIndex(1), RBinIndex(2)), 1);
+   histB.Fill(1.5, "b");
+
+   EXPECT_THROW(histA.Add(histB), std::invalid_argument);
+   EXPECT_THROW(histA.AddAtomic(histB), std::invalid_argument);
+
+   // Verify exception safety. Only the original entry should be there.
+   EXPECT_EQ(histA.GetNEntries(), 1);
+   EXPECT_EQ(histA.GetBinContent(RBinIndex(1), RBinIndex(2)), 1);
+   EXPECT_EQ(histA.GetStats().GetSumW(), 1);
+   EXPECT_EQ(histA.GetStats().GetSumW2(), 1);
+   EXPECT_EQ(histA.GetStats().GetDimensionStats(0).fSumWX, 1.5);
+   EXPECT_EQ(histA.GetStats().GetDimensionStats(1).fSumWX, 2.5);
 }
 
 TEST(RHist, Clear)
@@ -243,6 +324,30 @@ TEST(RHist, FillCategoricalWeight)
    EXPECT_FLOAT_EQ(hist.GetStats().GetSumW2(), 1.45);
    // Cross-checked with TH1
    EXPECT_FLOAT_EQ(hist.ComputeNEffectiveEntries(), 1.9931034);
+}
+
+TEST(RHist, FillExceptionSafety)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHist<float> hist({axis, axis});
+
+   hist.Fill(1.5, 2.5);
+   ASSERT_EQ(hist.GetNEntries(), 1);
+   ASSERT_EQ(hist.GetBinContent(RBinIndex(1), RBinIndex(2)), 1);
+
+   EXPECT_THROW(hist.Fill(1.5, "b"), std::invalid_argument);
+   EXPECT_THROW(hist.Fill(std::make_tuple(1.5, "b")), std::invalid_argument);
+   EXPECT_THROW(hist.Fill(1.5, "b", RWeight(1)), std::invalid_argument);
+   EXPECT_THROW(hist.Fill(std::make_tuple(1.5, "b"), RWeight(1)), std::invalid_argument);
+
+   // Verify exception safety. Only the first entry should be there.
+   EXPECT_EQ(hist.GetNEntries(), 1);
+   EXPECT_EQ(hist.GetBinContent(RBinIndex(1), RBinIndex(2)), 1);
+   EXPECT_EQ(hist.GetStats().GetSumW(), 1);
+   EXPECT_EQ(hist.GetStats().GetSumW2(), 1);
+   EXPECT_EQ(hist.GetStats().GetDimensionStats(0).fSumWX, 1.5);
+   EXPECT_EQ(hist.GetStats().GetDimensionStats(1).fSumWX, 2.5);
 }
 
 TEST(RHist, Scale)

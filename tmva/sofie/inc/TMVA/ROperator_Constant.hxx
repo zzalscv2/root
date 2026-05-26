@@ -124,8 +124,7 @@ public:
             std::cout << "adding constant tensor " << fNY << " with shape " << ConvertShapeToString(fShape)
             << " and values [";
             if (!fIsConstantOfShape) {
-               for (auto v : fValues) std::cout << " " << v;
-               std::cout << "]" << std::endl;
+               ConvertValuesToString(fValues, 10);   // add maximum printing values
             } else {  // for constant of shape is enough to print one value
                std::cout << "... " << fValues[0] << " ....]" << std::endl;
             }
@@ -141,15 +140,15 @@ public:
       std::stringstream out;
       if (fIsOutputConstant) {
          if (fNX.empty())
-            out <<  "// ---- Constant (no-op) " << opName << " --> " << fNY << " " << ConvertShapeToString(fDimOutputShape) << "\n";
+            out <<  "// ---- Constant (no-op) " << opName << " --> " << fNY << " " << ConvertDimShapeToString(fDimOutputShape) << "\n";
          else
-            out << "// ---- ConstantOfShape (no-op) " << opName << " --> " << fNY << " " << ConvertShapeToString(fDimOutputShape) << "\n";
+            out << "// ---- ConstantOfShape (no-op) " << opName << " --> " << fNY << " " << ConvertDimShapeToString(fDimOutputShape) << "\n";
          return out.str();
       }
       // Only ConstantOfShape might require generation code
       // generate constant tensor according to input
 
-      out << "\n//--------- ConstantOfShape " << opName << " --> " << ConvertShapeToString(fDimOutputShape) << "\n";
+      out << "\n//--------- ConstantOfShape " << opName << " --> " << ConvertDimShapeToString(fDimOutputShape) << "\n";
        // set shape values if needed
       if (fIsUndefinedInputShape) {
          for (size_t i = 0; i < fDimOutputShape.size(); i++) {

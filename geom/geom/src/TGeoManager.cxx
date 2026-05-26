@@ -351,7 +351,7 @@ TGeoManager::TGeoManager()
       fSkinSurfaces = nullptr;
       fBorderSurfaces = nullptr;
       memset(fPdgId, 0, 1024 * sizeof(Int_t));
-      //   TObjArray            *fNavigators;       //! list of navigators
+      //   TObjArray            *fNavigators;       ///<! list of navigators
       fCurrentTrack = nullptr;
       fCurrentVolume = nullptr;
       fTopVolume = nullptr;
@@ -770,8 +770,8 @@ Int_t TGeoManager::AddVolume(TGeoVolume *volume)
    }
    volume->SetNumber(uid);
    if (!fHashVolumes) {
-      fHashVolumes = new THashList(256);
-      fHashGVolumes = new THashList(256);
+      fHashVolumes = new THashList(256, 3);
+      fHashGVolumes = new THashList(256, 3);
    }
    TObjArray *list = fVolumes;
    if (!volume->GetShape() || volume->IsRunTime() || volume->IsVolumeMulti()) {
@@ -1558,8 +1558,8 @@ void TGeoManager::CloseGeometry(Option_t *option)
       if (!fHashVolumes) {
          Int_t nvol = fVolumes->GetEntriesFast();
          Int_t ngvol = fGVolumes->GetEntriesFast();
-         fHashVolumes = new THashList(nvol + 1);
-         fHashGVolumes = new THashList(ngvol + 1);
+         fHashVolumes = new THashList(nvol + 1, 3);
+         fHashGVolumes = new THashList(ngvol + 1, 3);
          Int_t i;
          for (i = 0; i < ngvol; i++)
             fHashGVolumes->AddLast(fGVolumes->At(i));
@@ -2716,7 +2716,6 @@ void TGeoManager::SaveAttributes(const char *filename)
    }
    out << "   // draw top volume with new settings" << std::endl;
    out << "   top->Draw();" << std::endl;
-   out << "   gPad->x3d();" << std::endl;
    out << "}" << std::endl;
    out.close();
 }
@@ -2995,8 +2994,8 @@ TGeoVolume *TGeoManager::FindVolumeFast(const char *name, Bool_t multi)
    if (!fHashVolumes) {
       Int_t nvol = fVolumes->GetEntriesFast();
       Int_t ngvol = fGVolumes->GetEntriesFast();
-      fHashVolumes = new THashList(nvol + 1);
-      fHashGVolumes = new THashList(ngvol + 1);
+      fHashVolumes = new THashList(nvol + 1, 3);
+      fHashGVolumes = new THashList(ngvol + 1, 3);
       Int_t i;
       for (i = 0; i < ngvol; i++)
          fHashGVolumes->AddLast(fGVolumes->At(i));

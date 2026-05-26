@@ -167,6 +167,25 @@ if(pyroot)
     ROOT_ADD_PYUNITTEST(dataframe_merge_results dataframe_merge_results.py)
     ROOT_ADD_PYUNITTEST(dataframe_snapshot_py dataframe_snapshot.py)
   endif()
+  if(root7)
+    ROOT_ADD_PYUNITTEST(dataframe_hist dataframe_hist.py)
+  endif()
 endif()
 
 configure_file(.rootrc . COPYONLY)
+
+# This test writes a column of an interpreted type to disk and checks its contents
+ROOT_ADD_GTEST(
+  dataframe_snapshot_interpreted_class_write
+  dataframe_snapshot_interpreted_class_write.cxx
+  LIBRARIES ROOTDataFrame
+  FIXTURES_SETUP dataframe_snapshot_interpreted_class_fixture)
+
+# Here we read back from disk the contents of that column in a different process
+# to avoid having the interpreter know about the definition of that class. Since
+# there is no dictionary, only the data members of the class can be accessed
+ROOT_ADD_GTEST(
+  dataframe_snapshot_interpreted_class_read
+  dataframe_snapshot_interpreted_class_read.cxx
+  LIBRARIES ROOTDataFrame
+  FIXTURES_REQUIRED dataframe_snapshot_interpreted_class_fixture)

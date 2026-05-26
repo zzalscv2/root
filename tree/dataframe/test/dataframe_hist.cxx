@@ -5,6 +5,7 @@
 #include <ROOT/RDFHelpers.hxx>
 #include <ROOT/RBinWithError.hxx>
 #include <ROOT/RHist.hxx>
+#include <ROOT/RHistEngine.hxx>
 #include <ROOT/RRegularAxis.hxx>
 #include <ROOT/RVariableBinAxis.hxx>
 
@@ -17,6 +18,7 @@
 using ROOT::RDataFrame;
 using ROOT::Experimental::RBinWithError;
 using ROOT::Experimental::RHist;
+using ROOT::Experimental::RHistEngine;
 using ROOT::Experimental::RRegularAxis;
 using ROOT::Experimental::RVariableBinAxis;
 using ROOT::RDF::RunGraphs;
@@ -42,29 +44,47 @@ public:
 TEST_P(RDFHist, Regular)
 {
    RDataFrame df(10);
+   auto dfX = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"});
+
    const RRegularAxis axis(10, {5.0, 15.0});
-   auto hist = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
-                  .Hist</*BinContentType=*/double, double>({axis}, {"x"});
+   auto hist = dfX.Hist</*BinContentType=*/double, double>({axis}, {"x"});
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto index : axis.GetNormalRange()) {
       EXPECT_EQ(hist->GetBinContent(index), 1.0);
    }
+
+   // The one-dimensional specialization returns the same type.
+   hist = dfX.Hist</*BinContentType=*/double, double>(10, {5.0, 15.0}, "x");
+   EXPECT_EQ(hist->GetNEntries(), 10);
 }
 
 TEST_P(RDFHist, RegularJit)
 {
    RDataFrame df(10);
+   auto dfX = df.Define("x", "rdfentry_ + 5.5");
+
    const RRegularAxis axis(10, {5.0, 15.0});
-   auto hist = df.Define("x", "rdfentry_ + 5.5").Hist({axis}, {"x"});
+   auto hist = dfX.Hist({axis}, {"x"});
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto index : axis.GetNormalRange()) {
       EXPECT_EQ(hist->GetBinContent(index), 1.0);
    }
+
+   // The user can template explicitly only the bin content type.
+   hist = dfX.Hist</*BinContentType=*/double>({axis}, {"x"});
+   EXPECT_EQ(hist->GetNEntries(), 10);
+
+   // The one-dimensional specialization returns the same type.
+   hist = dfX.Hist(10, {5.0, 15.0}, "x");
+   EXPECT_EQ(hist->GetNEntries(), 10);
 }
 
 TEST_P(RDFHist, MultiDim)
 {
    RDataFrame df(10);
+   auto dfXY = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
+                  .Define("y", [](ULong64_t e) { return 2 * e + 0.5; }, {"rdfentry_"});
+
    const RRegularAxis regularAxis(10, {5.0, 15.0});
    static constexpr std::size_t BinsY = 20;
    std::vector<double> bins;
@@ -74,9 +94,7 @@ TEST_P(RDFHist, MultiDim)
    bins.push_back(BinsY);
    const RVariableBinAxis variableBinAxis(bins);
 
-   auto hist = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
-                  .Define("y", [](ULong64_t e) { return 2 * e + 0.5; }, {"rdfentry_"})
-                  .Hist</*BinContentType=*/double, double, double>({regularAxis, variableBinAxis}, {"x", "y"});
+   auto hist = dfXY.Hist</*BinContentType=*/double, double, double>({regularAxis, variableBinAxis}, {"x", "y"});
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto x : regularAxis.GetNormalRange()) {
       for (auto y : variableBinAxis.GetNormalRange()) {
@@ -92,6 +110,8 @@ TEST_P(RDFHist, MultiDim)
 TEST_P(RDFHist, MultiDimJit)
 {
    RDataFrame df(10);
+   auto dfXY = df.Define("x", "rdfentry_ + 5.5").Define("y", "2 * rdfentry_ + 0.5");
+
    const RRegularAxis regularAxis(10, {5.0, 15.0});
    static constexpr std::size_t BinsY = 20;
    std::vector<double> bins;
@@ -101,9 +121,7 @@ TEST_P(RDFHist, MultiDimJit)
    bins.push_back(BinsY);
    const RVariableBinAxis variableBinAxis(bins);
 
-   auto hist = df.Define("x", "rdfentry_ + 5.5")
-                  .Define("y", "2 * rdfentry_ + 0.5")
-                  .Hist({regularAxis, variableBinAxis}, {"x", "y"});
+   auto hist = dfXY.Hist({regularAxis, variableBinAxis}, {"x", "y"});
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto x : regularAxis.GetNormalRange()) {
       for (auto y : variableBinAxis.GetNormalRange()) {
@@ -119,8 +137,10 @@ TEST_P(RDFHist, MultiDimJit)
 TEST_P(RDFHist, Ptr)
 {
    RDataFrame df(10);
+   auto dfX = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"});
+
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
-   auto resPtr = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"}).Hist<double>(hist, {"x"});
+   auto resPtr = dfX.Hist<double>(hist, {"x"});
    EXPECT_EQ(hist, resPtr.GetSharedPtr());
    EXPECT_EQ(hist->GetNEntries(), 10);
 }
@@ -128,8 +148,10 @@ TEST_P(RDFHist, Ptr)
 TEST_P(RDFHist, PtrJit)
 {
    RDataFrame df(10);
+   auto dfX = df.Define("x", "rdfentry_ + 5.5");
+
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
-   auto resPtr = df.Define("x", "rdfentry_ + 5.5").Hist(hist, {"x"});
+   auto resPtr = dfX.Hist(hist, {"x"});
    EXPECT_EQ(hist, resPtr.GetSharedPtr());
    EXPECT_EQ(hist->GetNEntries(), 10);
 }
@@ -148,16 +170,102 @@ TEST_P(RDFHist, PtrRunGraphs)
    EXPECT_EQ(hist->GetNEntries(), 17);
 }
 
+TEST_P(RDFHist, Engine)
+{
+   RDataFrame df(10);
+   auto dfX = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"});
+
+   const RRegularAxis axis(10, {5.0, 15.0});
+   auto hist = std::make_shared<RHistEngine<double>>(axis);
+   auto resPtr = dfX.Hist<double>(hist, {"x"});
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto index : axis.GetNormalRange()) {
+      EXPECT_EQ(hist->GetBinContent(index), 1.0);
+   }
+}
+
+TEST_P(RDFHist, EngineJit)
+{
+   RDataFrame df(10);
+   auto dfX = df.Define("x", "rdfentry_ + 5.5");
+
+   const RRegularAxis axis(10, {5.0, 15.0});
+   auto hist = std::make_shared<RHistEngine<double>>(axis);
+   auto resPtr = dfX.Hist(hist, {"x"});
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto index : axis.GetNormalRange()) {
+      EXPECT_EQ(hist->GetBinContent(index), 1.0);
+   }
+}
+
+TEST_P(RDFHist, EngineMultiDim)
+{
+   RDataFrame df(10);
+   auto dfXY = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
+                  .Define("y", [](ULong64_t e) { return 2 * e + 0.5; }, {"rdfentry_"});
+
+   const RRegularAxis regularAxis(10, {5.0, 15.0});
+   static constexpr std::size_t BinsY = 20;
+   std::vector<double> bins;
+   for (std::size_t i = 0; i < BinsY; i++) {
+      bins.push_back(i);
+   }
+   bins.push_back(BinsY);
+   const RVariableBinAxis variableBinAxis(bins);
+
+   auto hist = std::make_shared<RHistEngine<double>>(regularAxis, variableBinAxis);
+   auto resPtr = dfXY.Hist<double, double>(hist, {"x", "y"});
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto x : regularAxis.GetNormalRange()) {
+      for (auto y : variableBinAxis.GetNormalRange()) {
+         if (2 * x.GetIndex() == y.GetIndex()) {
+            EXPECT_EQ(hist->GetBinContent(x, y), 1.0);
+         } else {
+            EXPECT_EQ(hist->GetBinContent(x, y), 0.0);
+         }
+      }
+   }
+}
+
+TEST_P(RDFHist, EngineMultiDimJit)
+{
+   RDataFrame df(10);
+   auto dfXY = df.Define("x", "rdfentry_ + 5.5").Define("y", "2 * rdfentry_ + 0.5");
+
+   const RRegularAxis regularAxis(10, {5.0, 15.0});
+   static constexpr std::size_t BinsY = 20;
+   std::vector<double> bins;
+   for (std::size_t i = 0; i < BinsY; i++) {
+      bins.push_back(i);
+   }
+   bins.push_back(BinsY);
+   const RVariableBinAxis variableBinAxis(bins);
+
+   auto hist = std::make_shared<RHistEngine<double>>(regularAxis, variableBinAxis);
+   auto resPtr = dfXY.Hist(hist, {"x", "y"});
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto x : regularAxis.GetNormalRange()) {
+      for (auto y : variableBinAxis.GetNormalRange()) {
+         if (2 * x.GetIndex() == y.GetIndex()) {
+            EXPECT_EQ(hist->GetBinContent(x, y), 1.0);
+         } else {
+            EXPECT_EQ(hist->GetBinContent(x, y), 0.0);
+         }
+      }
+   }
+}
+
 TEST_P(RDFHist, InvalidNumberOfArguments)
 {
    RDataFrame df(10);
-   const RRegularAxis axis(10, {5.0, 15.0});
    auto dfX = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"});
+
+   const RRegularAxis axis(10, {5.0, 15.0});
    try {
       // Cannot use EXPECT_THROW because of template arguments...
       dfX.Hist</*BinContentType=*/double, double, double>({axis}, {"x", "x"});
       FAIL() << "expected std::invalid_argument";
-   } catch (const std::invalid_argument &e) {
+   } catch (const std::invalid_argument &) {
       // expected
    }
 
@@ -166,7 +274,16 @@ TEST_P(RDFHist, InvalidNumberOfArguments)
       // Cannot use EXPECT_THROW because of template arguments...
       dfX.Hist<double, double>(hist, {"x", "x"});
       FAIL() << "expected std::invalid_argument";
-   } catch (const std::invalid_argument &e) {
+   } catch (const std::invalid_argument &) {
+      // expected
+   }
+
+   auto engine = std::make_shared<RHistEngine<double>>(10, std::make_pair(5.0, 15.0));
+   try {
+      // Cannot use EXPECT_THROW because of template arguments...
+      dfX.Hist<double, double>(engine, {"x", "x"});
+      FAIL() << "expected std::invalid_argument";
+   } catch (const std::invalid_argument &) {
       // expected
    }
 }
@@ -174,21 +291,26 @@ TEST_P(RDFHist, InvalidNumberOfArguments)
 TEST_P(RDFHist, InvalidNumberOfArgumentsJit)
 {
    RDataFrame df(10);
-   const RRegularAxis axis(10, {5.0, 15.0});
    auto dfX = df.Define("x", "rdfentry_ + 5.5");
+
+   const RRegularAxis axis(10, {5.0, 15.0});
    EXPECT_THROW(dfX.Hist({axis}, {"x", "x"}), std::invalid_argument);
 
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
    EXPECT_THROW(dfX.Hist(hist, {"x", "x"}), std::invalid_argument);
+
+   auto engine = std::make_shared<RHistEngine<double>>(10, std::make_pair(5.0, 15.0));
+   EXPECT_THROW(dfX.Hist(engine, {"x", "x"}), std::invalid_argument);
 }
 
 TEST_P(RDFHist, Weight)
 {
    RDataFrame df(10);
+   auto dfXW = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
+                  .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"});
+
    const RRegularAxis axis(10, {5.0, 15.0});
-   auto hist = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
-                  .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"})
-                  .Hist</*BinContentType=*/RBinWithError, double, double>({axis}, {"x"}, "w");
+   auto hist = dfXW.Hist</*BinContentType=*/RBinWithError, double, double>({axis}, {"x"}, "w");
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto index : axis.GetNormalRange()) {
       auto &bin = hist->GetBinContent(index);
@@ -196,13 +318,19 @@ TEST_P(RDFHist, Weight)
       EXPECT_FLOAT_EQ(bin.fSum, weight);
       EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
    }
+
+   // The one-dimensional specialization returns the same type.
+   hist = dfXW.Hist</*BinContentType=*/RBinWithError, double, double>(10, {5.0, 15.0}, "x", "w");
+   EXPECT_EQ(hist->GetNEntries(), 10);
 }
 
 TEST_P(RDFHist, WeightJit)
 {
    RDataFrame df(10);
+   auto dfXW = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03");
+
    const RRegularAxis axis(10, {5.0, 15.0});
-   auto hist = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03").Hist({axis}, {"x"}, "w");
+   auto hist = dfXW.Hist({axis}, {"x"}, "w");
    EXPECT_EQ(hist->GetNEntries(), 10);
    for (auto index : axis.GetNormalRange()) {
       auto &bin = hist->GetBinContent(index);
@@ -210,15 +338,24 @@ TEST_P(RDFHist, WeightJit)
       EXPECT_FLOAT_EQ(bin.fSum, weight);
       EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
    }
+
+   // The user can template explicitly only the bin content type.
+   hist = dfXW.Hist</*BinContentType=*/RBinWithError>({axis}, {"x"}, "w");
+   EXPECT_EQ(hist->GetNEntries(), 10);
+
+   // The one-dimensional specialization returns the same type.
+   hist = dfXW.Hist(10, {5.0, 15.0}, "x", "w");
+   EXPECT_EQ(hist->GetNEntries(), 10);
 }
 
 TEST_P(RDFHist, PtrWeight)
 {
    RDataFrame df(10);
+   auto dfXW = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
+                  .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"});
+
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
-   auto resPtr = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
-                    .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"})
-                    .Hist<double, double>(hist, {"x"}, "w");
+   auto resPtr = dfXW.Hist<double, double>(hist, {"x"}, "w");
    EXPECT_EQ(hist, resPtr.GetSharedPtr());
    EXPECT_EQ(hist->GetNEntries(), 10);
 }
@@ -226,23 +363,61 @@ TEST_P(RDFHist, PtrWeight)
 TEST_P(RDFHist, PtrWeightJit)
 {
    RDataFrame df(10);
+   auto dfXW = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03");
+
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
-   auto resPtr = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03").Hist(hist, {"x"}, "w");
+   auto resPtr = dfXW.Hist(hist, {"x"}, "w");
    EXPECT_EQ(hist, resPtr.GetSharedPtr());
    EXPECT_EQ(hist->GetNEntries(), 10);
+}
+
+TEST_P(RDFHist, EngineWeight)
+{
+   RDataFrame df(10);
+   auto dfXW = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
+                  .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"});
+
+   const RRegularAxis axis(10, {5.0, 15.0});
+   auto hist = std::make_shared<RHistEngine<RBinWithError>>(10, std::make_pair(5.0, 15.0));
+   auto resPtr = dfXW.Hist<double, double>(hist, {"x"}, "w");
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto index : axis.GetNormalRange()) {
+      auto &bin = hist->GetBinContent(index);
+      double weight = 0.1 + index.GetIndex() * 0.03;
+      EXPECT_FLOAT_EQ(bin.fSum, weight);
+      EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
+   }
+}
+
+TEST_P(RDFHist, EngineWeightJit)
+{
+   RDataFrame df(10);
+   auto dfXW = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03");
+
+   const RRegularAxis axis(10, {5.0, 15.0});
+   auto hist = std::make_shared<RHistEngine<RBinWithError>>(10, std::make_pair(5.0, 15.0));
+   auto resPtr = dfXW.Hist(hist, {"x"}, "w");
+   EXPECT_EQ(hist, resPtr.GetSharedPtr());
+   for (auto index : axis.GetNormalRange()) {
+      auto &bin = hist->GetBinContent(index);
+      double weight = 0.1 + index.GetIndex() * 0.03;
+      EXPECT_FLOAT_EQ(bin.fSum, weight);
+      EXPECT_FLOAT_EQ(bin.fSum2, weight * weight);
+   }
 }
 
 TEST_P(RDFHist, WeightInvalidNumberOfArguments)
 {
    RDataFrame df(10);
-   const RRegularAxis axis(10, {5.0, 15.0});
    auto dfXW = df.Define("x", [](ULong64_t e) { return e + 5.5; }, {"rdfentry_"})
                   .Define("w", [](ULong64_t e) { return 0.1 + e * 0.03; }, {"rdfentry_"});
+
+   const RRegularAxis axis(10, {5.0, 15.0});
    try {
       // Cannot use EXPECT_THROW because of template arguments...
       dfXW.Hist</*BinContentType=*/double, double, double, double>({axis}, {"x", "x"}, "w");
       FAIL() << "expected std::invalid_argument";
-   } catch (const std::invalid_argument &e) {
+   } catch (const std::invalid_argument &) {
       // expected
    }
 
@@ -251,7 +426,16 @@ TEST_P(RDFHist, WeightInvalidNumberOfArguments)
       // Cannot use EXPECT_THROW because of template arguments...
       dfXW.Hist<double, double, double>(hist, {"x", "x"}, "w");
       FAIL() << "expected std::invalid_argument";
-   } catch (const std::invalid_argument &e) {
+   } catch (const std::invalid_argument &) {
+      // expected
+   }
+
+   auto engine = std::make_shared<RHistEngine<double>>(10, std::make_pair(5.0, 15.0));
+   try {
+      // Cannot use EXPECT_THROW because of template arguments...
+      dfXW.Hist<double, double, double>(engine, {"x", "x"}, "w");
+      FAIL() << "expected std::invalid_argument";
+   } catch (const std::invalid_argument &) {
       // expected
    }
 }
@@ -259,12 +443,16 @@ TEST_P(RDFHist, WeightInvalidNumberOfArguments)
 TEST_P(RDFHist, WeightInvalidNumberOfArgumentsJit)
 {
    RDataFrame df(10);
-   const RRegularAxis axis(10, {5.0, 15.0});
    auto dfXW = df.Define("x", "rdfentry_ + 5.5").Define("w", "0.1 + rdfentry_ * 0.03");
+
+   const RRegularAxis axis(10, {5.0, 15.0});
    EXPECT_THROW(dfXW.Hist({axis}, {"x", "x"}, "w"), std::invalid_argument);
 
    auto hist = std::make_shared<RHist<double>>(10, std::make_pair(5.0, 15.0));
    EXPECT_THROW(dfXW.Hist(hist, {"x", "x"}, "w"), std::invalid_argument);
+
+   auto engine = std::make_shared<RHistEngine<double>>(10, std::make_pair(5.0, 15.0));
+   EXPECT_THROW(dfXW.Hist(engine, {"x", "x"}, "w"), std::invalid_argument);
 }
 
 INSTANTIATE_TEST_SUITE_P(Seq, RDFHist, ::testing::Values(false));

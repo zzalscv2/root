@@ -99,6 +99,8 @@ std::string ConvertTypeToString(ETensorType type){
    }
 }
 
+// invert function might now work correctly for booleans
+// prefer avoid using it if possible
 ETensorType ConvertStringToType(std::string type){
    if(type == "float32" || type == "float" || type == "Float"){
      return ETensorType::FLOAT;
@@ -106,10 +108,13 @@ ETensorType ConvertStringToType(std::string type){
    else if(type == "int64" || type == "int64_t"){
      return ETensorType::INT64;
    }
+   else if(type == "int32" || type == "int32_t"){
+     return ETensorType::INT32;
+   }
    else if (type == "double" || type == "float64"){
       return ETensorType::DOUBLE;
    }
-   else if (type == "bool" ){
+   else if (type == "bool" || type == "uint8_t" ){
       return ETensorType::BOOL;
    }
    else{
@@ -145,21 +150,21 @@ std::string ConvertDimShapeToLength(const std::vector<Dim> & shape) {
    std::string length;
    // case of empty vectors return 1
    if (shape.empty()) return "1";
-   size_t int_length = 0;
+   int64_t int_length = -1;
    for (size_t i = 0; i < shape.size(); i++) {
       if (shape[i].isParam) {
          if (!length.empty()) length += " * ";
          length += shape[i].param;
       } else {
-         if (int_length == 0)
+         if (int_length == -1)
             int_length = shape[i].dim;
          else
             int_length *= shape[i].dim;
       }
    }
    // multiply the integer components to the parametric one
-   // if larger than 1
-   if (int_length > 0) {
+   // if larger than 1 - otherwise returns -1
+   if (int_length >= 0) {
       if (!length.empty() && int_length > 1) {
          length += " * ";
          length += std::to_string(int_length);
@@ -168,12 +173,6 @@ std::string ConvertDimShapeToLength(const std::vector<Dim> & shape) {
       }
    }
    return length;
-}
-std::string ConvertShapeToString(const std::vector<Dim> & shape) {
-   return ConvertDimShapeToString(shape);
-}
-std::string ConvertDynamicShapeToLength(const std::vector<Dim> & shape) {
-   return ConvertDimShapeToLength(shape);
 }
 
 
@@ -549,6 +548,29 @@ std::vector<Dim> UTILITY::ComputeStrideFromShape(const std::vector<Dim> & shape)
    }
    return strides;
 }
+
+// utilities functions for generating code
+
+// ------------------------------------------------------------------ //
+//  Emit 'rank' nested for-loops: for(size_t idx_i=0; idx_i<dim_i; )  //
+// ------------------------------------------------------------------ //
+const std::string SP = "   ";
+void EmitNestedLoops(std::stringstream &out, size_t loopRank, const std::vector<Dim> shape) {
+   for (size_t i = 0; i < loopRank; ++i) {
+      for (size_t s = 0; s < i + 2; ++s) out << SP;
+
+      out << "for (size_t idx_" << i << " = 0; idx_" << i
+          << " < " << shape[i] << "; ++idx_" << i << ") {\n";
+   }
+}
+void CloseNestedLoops(std::stringstream &out, size_t loopRank) {
+   for (int64_t i = loopRank - 1; i >= 0; --i) {
+      for (int64_t s = 0; s < i + 2; ++s) out << SP;
+         out << "}\n";
+   }
+}
+
+
 
 struct FreeBlock {
   std::size_t offset;

@@ -1,5 +1,4 @@
 /// \file ROOT/RPageStorageFile.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2019-11-21
 
@@ -73,6 +72,7 @@ private:
    ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fInfosOfClassFields;
 
    RPageSinkFile(std::string_view ntupleName, const ROOT::RNTupleWriteOptions &options);
+   RPageSinkFile(std::unique_ptr<ROOT::Internal::RNTupleFileWriter> writer, const ROOT::RNTupleWriteOptions &options);
 
    /// We pass bytesPacked so that TFile::ls() reports a reasonable value for the compression ratio of the corresponding
    /// key. It is not strictly necessary to write and read the sealed page.
@@ -95,7 +95,7 @@ protected:
    std::uint64_t StageClusterImpl() final;
    RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList, std::uint32_t length) final;
    using RPagePersistentSink::CommitDatasetImpl;
-   void CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) final;
+   RNTupleLink CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) final;
 
 public:
    RPageSinkFile(std::string_view ntupleName, std::string_view path, const ROOT::RNTupleWriteOptions &options);
@@ -109,6 +109,9 @@ public:
    ~RPageSinkFile() override;
 
    void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset, ROOT::NTupleSize_t firstEntry) final;
+
+   std::unique_ptr<RPageSink>
+   CloneAsHidden(std::string_view name, const ROOT::RNTupleWriteOptions &opts) const override;
 }; // class RPageSinkFile
 
 // clang-format off
@@ -148,6 +151,19 @@ private:
    RNTupleDescriptorBuilder fDescriptorBuilder;
    /// Populated by LoadStructureImpl(), reset at the end of Attach()
    RStructureBuffer fStructureBuffer;
+   /// Tracks the last read offset for seek distance calculation
+   std::uint64_t fLastOffset = 0;
+
+   /// File-specific I/O performance counters
+   struct RFileCounters {
+      ROOT::Experimental::Detail::RNTupleAtomicCounter &fSzSkip;
+      ROOT::Experimental::Detail::RNTupleCalcPerf &fSzFile;
+      ROOT::Experimental::Detail::RNTupleCalcPerf &fRandomness;
+      ROOT::Experimental::Detail::RNTupleCalcPerf &fSparseness;
+   };
+   std::unique_ptr<RFileCounters> fFileCounters;
+   /// Total file size, set once in AttachImpl()
+   std::int64_t fFileSize = 0;
 
    RPageSourceFile(std::string_view ntupleName, const ROOT::RNTupleReadOptions &options);
 
@@ -182,10 +198,8 @@ public:
    RPageSourceFile &operator=(RPageSourceFile &&) = delete;
    ~RPageSourceFile() override;
 
-   /// Creates a new PageSourceFile using the same underlying file as this but referring to a different RNTuple,
-   /// represented by `anchor`.
-   std::unique_ptr<RPageSourceFile>
-   OpenWithDifferentAnchor(const RNTuple &anchor, const ROOT::RNTupleReadOptions &options = ROOT::RNTupleReadOptions());
+   std::unique_ptr<RPageSource> OpenWithDifferentAnchor(const ROOT::Internal::RNTupleLink &anchorLink,
+                                                        const ROOT::RNTupleReadOptions &options = {}) final;
 
    void
    LoadSealedPage(ROOT::DescriptorId_t physicalColumnId, RNTupleLocalIndex localIndex, RSealedPage &sealedPage) final;

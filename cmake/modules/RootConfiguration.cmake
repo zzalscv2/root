@@ -161,13 +161,11 @@ set(davixlib ${DAVIX_LIBRARY})
 set(davixincdir ${DAVIX_INCLUDE_DIR})
 if(davix)
   set(hasdavix define)
-  set(useoldwebfile no)
 else()
   set(hasdavix undef)
-  set(useoldwebfile yes)
 endif()
 
-set(buildnetxng ${value${netxng}})
+set(buildnetxng ${value${xrootd}})
 
 set(buildcurl ${value${curl}})
 set(curllibdir ${CURL_LIBRARY_DIR})
@@ -188,11 +186,6 @@ set(buildftgl ${value${builtin_ftgl}})
 set(ftgllibdir ${FTGL_LIBRARY_DIR})
 set(ftgllibs ${FTGL_LIBRARIES})
 set(ftglincdir ${FTGL_INCLUDE_DIR})
-
-set(buildglew ${value${builtin_glew}})
-set(glewlibdir ${GLEW_LIBRARY_DIR})
-set(glewlibs ${GLEW_LIBRARIES})
-set(glewincdir ${GLEW_INCLUDE_DIR})
 
 set(buildarrow ${value${arrow}})
 set(arrowlibdir ${ARROW_LIBRARY_DIR})
@@ -401,18 +394,10 @@ else()
   set(hasroot7 undef)
 endif()
 
-set(uselz4 undef)
-set(usezlib undef)
-set(uselzma undef)
-set(usezstd undef)
-set(use${compression_default} define)
-
-# cloudflare zlib is available only on x86 and aarch64 platforms with Linux
-# for other platforms we have available builtin zlib 1.2.8
-if(builtin_zlib AND ZLIB_CF)
-  set(usecloudflarezlib define)
+if(ZLIB_NG)
+  set(usezlibng define)
 else()
-  set(usecloudflarezlib undef)
+  set(usezlibng undef)
 endif()
 if(runtime_cxxmodules)
   set(usecxxmodules define)
@@ -584,8 +569,6 @@ install(FILES ${CMAKE_BINARY_DIR}/ginclude/RConfigure.h DESTINATION ${CMAKE_INST
 execute_Process(COMMAND hostname OUTPUT_VARIABLE BuildNodeInfo OUTPUT_STRIP_TRAILING_WHITESPACE )
 
 configure_file(${CMAKE_SOURCE_DIR}/config/rootrc.in ${CMAKE_BINARY_DIR}/etc/system.rootrc @ONLY NEWLINE_STYLE UNIX)
-configure_file(${CMAKE_SOURCE_DIR}/config/rootauthrc.in ${CMAKE_BINARY_DIR}/etc/system.rootauthrc @ONLY NEWLINE_STYLE UNIX)
-configure_file(${CMAKE_SOURCE_DIR}/config/rootdaemonrc.in ${CMAKE_BINARY_DIR}/etc/system.rootdaemonrc @ONLY NEWLINE_STYLE UNIX)
 
 # file used in TROOT.cxx, not need in include/ dir and not need to install
 configure_file(${CMAKE_SOURCE_DIR}/config/RConfigOptions.in ginclude/RConfigOptions.h NEWLINE_STYLE UNIX)
@@ -819,8 +802,6 @@ install(FILES ${CMAKE_BINARY_DIR}/ginclude/RConfigOptions.h
 
 install(FILES ${CMAKE_BINARY_DIR}/etc/root.mimes
               ${CMAKE_BINARY_DIR}/etc/system.rootrc
-              ${CMAKE_BINARY_DIR}/etc/system.rootauthrc
-              ${CMAKE_BINARY_DIR}/etc/system.rootdaemonrc
               DESTINATION ${CMAKE_INSTALL_SYSCONFDIR})
 
 endfunction()

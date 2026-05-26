@@ -1,6 +1,8 @@
 #include "hist_test.hxx"
 
 #include <array>
+#include <iterator>
+#include <random>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -81,6 +83,17 @@ TEST(RHistEngine, GetBinContentInvalidNumberOfArguments)
    EXPECT_THROW(engine2.GetBinContent(1), std::invalid_argument);
    EXPECT_NO_THROW(engine2.GetBinContent(1, 2));
    EXPECT_THROW(engine2.GetBinContent(1, 2, 3), std::invalid_argument);
+
+   const std::vector<RBinIndex> indicesV1 = {1};
+   const std::vector<RBinIndex> indicesV2 = {1, 2};
+   const std::vector<RBinIndex> indicesV3 = {1, 2, 3};
+
+   EXPECT_NO_THROW(engine1.GetBinContent(indicesV1));
+   EXPECT_THROW(engine1.GetBinContent(indicesV2), std::invalid_argument);
+
+   EXPECT_THROW(engine2.GetBinContent(indicesV1), std::invalid_argument);
+   EXPECT_NO_THROW(engine2.GetBinContent(indicesV2));
+   EXPECT_THROW(engine2.GetBinContent(indicesV3), std::invalid_argument);
 }
 
 TEST(RHistEngine, GetBinContentNotFound)
@@ -90,23 +103,80 @@ TEST(RHistEngine, GetBinContentNotFound)
    const RHistEngine<int> engine({axis});
 
    EXPECT_THROW(engine.GetBinContent(Bins), std::invalid_argument);
+
+   const std::vector<RBinIndex> indicesV = {Bins};
+   EXPECT_THROW(engine.GetBinContent(indicesV), std::invalid_argument);
+}
+
+TEST(RHistEngine, GetFullMultiDimRange)
+{
+   static constexpr std::size_t Bins = 20;
+   RHistEngine<int> engine(Bins, {0, Bins});
+
+   std::mt19937 gen;
+   std::uniform_real_distribution<double> dist(0, Bins);
+   static constexpr std::size_t Entries = 1000;
+   for (std::size_t i = 0; i < Entries; i++) {
+      engine.Fill(dist(gen));
+   }
+
+   auto range = engine.GetFullMultiDimRange();
+   EXPECT_EQ(std::distance(range.begin(), range.end()), Bins + 2);
+
+   int entries = 0;
+   for (auto &&indices : range) {
+      entries += engine.GetBinContent(indices);
+   }
+   EXPECT_EQ(entries, Entries);
 }
 
 TEST(RHistEngine, SetBinContent)
 {
-   using ROOT::Experimental::Internal::SetBinContent;
-
    static constexpr std::size_t Bins = 20;
    const RRegularAxis axis(Bins, {0, Bins});
    RHistEngine<int> engine({axis});
 
-   std::array<RBinIndex, 1> indices = {7};
-   SetBinContent(engine, indices, 42);
-   EXPECT_EQ(engine.GetBinContent(indices), 42);
+   const RBinIndex index(7);
+   engine.SetBinContent(index, 42);
+   EXPECT_EQ(engine.GetBinContent(index), 42);
 
-   // "bin not found"
-   indices = {Bins};
-   EXPECT_THROW(SetBinContent(engine, indices, 43), std::invalid_argument);
+   const std::array<RBinIndex, 1> indices = {index};
+   engine.SetBinContent(indices, 43);
+   EXPECT_EQ(engine.GetBinContent(indices), 43);
+
+   // This also works if the value must be converted to the bin content type.
+   RHistEngine<float> engineF({axis});
+   engineF.SetBinContent(index, 42);
+   EXPECT_EQ(engineF.GetBinContent(index), 42);
+
+   engineF.SetBinContent(indices, 43);
+   EXPECT_EQ(engineF.GetBinContent(indices), 43);
+}
+
+TEST(RHistEngine, SetBinContentInvalidNumberOfArguments)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<int> engine1({axis});
+   ASSERT_EQ(engine1.GetNDimensions(), 1);
+   RHistEngine<int> engine2({axis, axis});
+   ASSERT_EQ(engine2.GetNDimensions(), 2);
+
+   EXPECT_NO_THROW(engine1.SetBinContent(1, 0));
+   EXPECT_THROW(engine1.SetBinContent(1, 2, 0), std::invalid_argument);
+
+   EXPECT_THROW(engine2.SetBinContent(1, 0), std::invalid_argument);
+   EXPECT_NO_THROW(engine2.SetBinContent(1, 2, 0));
+   EXPECT_THROW(engine2.SetBinContent(1, 2, 3, 0), std::invalid_argument);
+}
+
+TEST(RHistEngine, SetBinContentNotFound)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<int> engine({axis});
+
+   EXPECT_THROW(engine.SetBinContent(Bins, 0), std::invalid_argument);
 }
 
 TEST(RHistEngine, Add)
@@ -407,6 +477,19 @@ TEST(RHistEngine, FillTupleWeightInvalidNumberOfArguments)
    EXPECT_THROW(engine2.Fill(std::make_tuple(1), RWeight(1)), std::invalid_argument);
    EXPECT_NO_THROW(engine2.Fill(std::make_tuple(1, 2), RWeight(1)));
    EXPECT_THROW(engine2.Fill(std::make_tuple(1, 2, 3), RWeight(1)), std::invalid_argument);
+}
+
+TEST(RHistEngine, FillWeightNegative)
+{
+   static constexpr std::size_t Bins = 20;
+   const RRegularAxis axis(Bins, {0, Bins});
+   RHistEngine<float> engine({axis});
+
+   engine.Fill(1.5, RWeight(1));
+   ASSERT_EQ(engine.GetBinContent(RBinIndex(1)), 1);
+
+   engine.Fill(1.5, RWeight(-1));
+   EXPECT_EQ(engine.GetBinContent(RBinIndex(1)), 0);
 }
 
 TEST(RHistEngine, Scale)

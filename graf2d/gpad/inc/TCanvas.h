@@ -24,6 +24,7 @@ class TCanvas : public TPad {
 
 friend class TCanvasImp;
 friend class TWebCanvas;
+friend class TPad;      // to create/reset painter for PS drawing
 friend class TThread;
 friend class TInterpreter;
 
@@ -65,6 +66,8 @@ protected:
    //
    TVirtualPadPainter *fPainter;   ///<! Canvas (pad) painter.
 
+   TVirtualPad *fHilightPadBorder = nullptr; ///<! pad which border will be hilghlighrt when paint canvas
+
    static Bool_t fgIsFolder;       ///< Indicates if canvas can be browsed as a folder
 
 private:
@@ -77,6 +80,7 @@ private:
 
    //Initialize PadPainter.
    void     CreatePainter();
+   Bool_t   EnsurePSPainter(Bool_t create, TVirtualPadPainter *&oldp);
 
 protected:
    void     ExecuteEvent(Int_t event, Int_t px, Int_t py) override;
@@ -162,6 +166,8 @@ public:
    UInt_t            GetWindowHeight() const { return fWindowHeight; }
    UInt_t            GetWw() const override { return fCw; }
    UInt_t            GetWh() const override { return fCh; }
+   UInt_t            GetPadWidth() const override { return fCw; }
+   UInt_t            GetPadHeight() const override { return fCh; }
    virtual void      GetCanvasPar(Int_t &wtopx, Int_t &wtopy, UInt_t &ww, UInt_t &wh)
                      {wtopx=GetWindowTopX(); wtopy=fWindowTopY; ww=fWindowWidth; wh=fWindowHeight;}
    virtual void      HandleInput(EEventType button, Int_t x, Int_t y);

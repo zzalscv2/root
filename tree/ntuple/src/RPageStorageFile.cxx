@@ -1,5 +1,4 @@
 /// \file RPageStorageFile.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2019-11-25
 
@@ -42,7 +41,20 @@
 #include <functional>
 #include <mutex>
 
+using ROOT::Experimental::Detail::RNTupleAtomicCounter;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
+using ROOT::Experimental::Detail::RNTupleCalcPerf;
+using ROOT::Experimental::Detail::RNTupleMetrics;
+using ROOT::Internal::MakeUninitArray;
+using ROOT::Internal::RCluster;
+using ROOT::Internal::RClusterPool;
+using ROOT::Internal::RNTupleCompressor;
+using ROOT::Internal::RNTupleDecompressor;
+using ROOT::Internal::RNTupleFileWriter;
+using ROOT::Internal::RNTupleSerializer;
+using ROOT::Internal::ROnDiskPage;
+using ROOT::Internal::ROnDiskPageMap;
+using ROOT::Internal::RPagePool;
 
 ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, const ROOT::RNTupleWriteOptions &options)
    : RPagePersistentSink(ntupleName, options)
@@ -62,7 +74,7 @@ ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, TDirec
                                              const ROOT::RNTupleWriteOptions &options)
    : RPageSinkFile(ntupleName, options)
 {
-   fWriter = RNTupleFileWriter::Append(ntupleName, fileOrDirectory, options.GetMaxKeySize());
+   fWriter = RNTupleFileWriter::Append(ntupleName, fileOrDirectory, options.GetMaxKeySize(), /*hidden=*/false);
 }
 
 ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, ROOT::Experimental::RFile &file,
@@ -70,6 +82,13 @@ ROOT::Internal::RPageSinkFile::RPageSinkFile(std::string_view ntupleName, ROOT::
    : RPageSinkFile(ntupleName, options)
 {
    fWriter = RNTupleFileWriter::Append(ntupleName, file, ntupleDir, options.GetMaxKeySize());
+}
+
+ROOT::Internal::RPageSinkFile::RPageSinkFile(std::unique_ptr<ROOT::Internal::RNTupleFileWriter> writer,
+                                             const ROOT::RNTupleWriteOptions &options)
+   : RPageSinkFile(writer->GetNTupleName(), options)
+{
+   fWriter = std::move(writer);
 }
 
 ROOT::Internal::RPageSinkFile::~RPageSinkFile() {}
@@ -93,6 +112,8 @@ void ROOT::Internal::RPageSinkFile::UpdateSchema(const ROOT::Internal::RNTupleMo
          cl = classField->GetClass();
       } else if (auto streamerField = dynamic_cast<const RStreamerField *>(field)) {
          cl = streamerField->GetClass();
+      } else if (auto soaField = dynamic_cast<const ROOT::Experimental::RSoAField *>(field)) {
+         cl = soaField->GetSoAClass();
       }
       if (!cl)
          return;
@@ -270,7 +291,8 @@ ROOT::Internal::RPageSinkFile::CommitClusterGroupImpl(unsigned char *serializedP
    return result;
 }
 
-void ROOT::Internal::RPageSinkFile::CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length)
+ROOT::Internal::RNTupleLink
+ROOT::Internal::RPageSinkFile::CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length)
 {
    // Add the streamer info records from streamer fields: because of runtime polymorphism we may need to add additional
    // types not covered by the type names of the class fields
@@ -288,7 +310,15 @@ void ROOT::Internal::RPageSinkFile::CommitDatasetImpl(unsigned char *serializedF
    auto szFooterZip =
       RNTupleCompressor::Zip(serializedFooter, length, GetWriteOptions().GetCompression(), bufFooterZip.get());
    fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
-   fWriter->Commit(GetWriteOptions().GetCompression());
+   return fWriter->Commit(GetWriteOptions().GetCompression());
+}
+
+std::unique_ptr<ROOT::Internal::RPageSink>
+ROOT::Internal::RPageSinkFile::CloneAsHidden(std::string_view name, const ROOT::RNTupleWriteOptions &opts) const
+{
+   auto writer = fWriter->CloneAsHidden(name);
+   auto cloned = std::unique_ptr<RPageSinkFile>(new RPageSinkFile(std::move(writer), opts));
+   return cloned;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,6 +327,46 @@ ROOT::Internal::RPageSourceFile::RPageSourceFile(std::string_view ntupleName, co
    : RPageSource(ntupleName, opts)
 {
    EnableDefaultMetrics("RPageSourceFile");
+   fFileCounters = std::make_unique<RFileCounters>(RFileCounters{
+      *fMetrics.MakeCounter<RNTupleAtomicCounter *>("szSkip", "B",
+                                                    "cumulative seek distance (excluding header/footer reads)"),
+      *fMetrics.MakeCounter<RNTupleCalcPerf *>(
+         "szFile", "B", "total file size", fMetrics,
+         [this](const RNTupleMetrics &) -> std::pair<bool, double> {
+            if (fFileSize > 0)
+               return {true, static_cast<double>(fFileSize)};
+            return {false, -1.};
+         }),
+      *fMetrics.MakeCounter<RNTupleCalcPerf *>(
+         "randomness", "",
+         "ratio of seek distance to bytes read (excluding file structure reads)", fMetrics,
+         [](const RNTupleMetrics &metrics) -> std::pair<bool, double> {
+            if (const auto szSkip = metrics.GetLocalCounter("szSkip")) {
+               if (const auto szReadPayload = metrics.GetLocalCounter("szReadPayload")) {
+                  if (const auto szReadOverhead = metrics.GetLocalCounter("szReadOverhead")) {
+                     auto totalRead = szReadPayload->GetValueAsInt() + szReadOverhead->GetValueAsInt();
+                     if (totalRead > 0) {
+                        return {true, (1. * szSkip->GetValueAsInt()) / totalRead};
+                     }
+                  }
+               }
+            }
+            return {false, -1.};
+         }),
+      *fMetrics.MakeCounter<RNTupleCalcPerf *>(
+         "sparseness", "",
+         "ratio of bytes read to total file size (excluding file structure reads)", fMetrics,
+         [this](const RNTupleMetrics &metrics) -> std::pair<bool, double> {
+            if (fFileSize > 0) {
+               if (const auto szReadPayload = metrics.GetLocalCounter("szReadPayload")) {
+                  if (const auto szReadOverhead = metrics.GetLocalCounter("szReadOverhead")) {
+                     auto totalRead = szReadPayload->GetValueAsInt() + szReadOverhead->GetValueAsInt();
+                     return {true, (1. * totalRead) / fFileSize};
+                  }
+               }
+            }
+            return {false, -1.};
+         })});
 }
 
 ROOT::Internal::RPageSourceFile::RPageSourceFile(std::string_view ntupleName,
@@ -322,15 +392,15 @@ ROOT::Internal::RPageSourceFile::CreateFromAnchor(const RNTuple &anchor, const R
       throw RException(R__FAIL("This RNTuple object was not streamed from a ROOT file (TFile or descendant)"));
 
    std::unique_ptr<ROOT::Internal::RRawFile> rawFile;
-   // For local TFiles, TDavixFile, and TNetXNGFile, we want to open a new RRawFile to take advantage of the faster
-   // reading. We check the exact class name to avoid classes inheriting in ROOT (for example TMemFile) or in
+   // For local TFiles, TDavixFile, TCurlFile, and TNetXNGFile, we want to open a new RRawFile to take advantage of the
+   // faster reading. We check the exact class name to avoid classes inheriting in ROOT (for example TMemFile) or in
    // experiment frameworks.
    std::string className = anchor.fFile->IsA()->GetName();
    auto url = anchor.fFile->GetEndpointUrl();
    auto protocol = std::string(url->GetProtocol());
    if (className == "TFile") {
       rawFile = ROOT::Internal::RRawFile::Create(url->GetFile());
-   } else if (className == "TDavixFile" || className == "TNetXNGFile") {
+   } else if (className == "TDavixFile" || className == "TCurlFile" || className == "TNetXNGFile") {
       rawFile = ROOT::Internal::RRawFile::Create(url->GetUrl());
    } else {
       rawFile.reset(new ROOT::Internal::RRawFileTFile(anchor.fFile));
@@ -347,9 +417,15 @@ ROOT::Internal::RPageSourceFile::~RPageSourceFile()
    fClusterPool.StopBackgroundThread();
 }
 
-std::unique_ptr<ROOT::Internal::RPageSourceFile>
-ROOT::Internal::RPageSourceFile::OpenWithDifferentAnchor(const RNTuple &anchor, const ROOT::RNTupleReadOptions &options)
+std::unique_ptr<ROOT::Internal::RPageSource>
+ROOT::Internal::RPageSourceFile::OpenWithDifferentAnchor(const ROOT::Internal::RNTupleLink &anchorLink,
+                                                         const ROOT::RNTupleReadOptions &options)
 {
+   assert(anchorLink.fLocator.GetType() == RNTupleLocator::kTypeFile);
+
+   const auto anchorPos = anchorLink.fLocator.GetPosition<std::uint64_t>();
+   auto anchor =
+      fReader.GetNTupleProperAtOffset(anchorPos, anchorLink.fLocator.GetNBytesOnStorage(), anchorLink.fLength).Unwrap();
    auto pageSource = std::make_unique<RPageSourceFile>("", fFile->Clone(), options);
    pageSource->fAnchor = anchor;
    // NOTE: fNTupleName gets set only upon Attach().
@@ -436,6 +512,9 @@ ROOT::RNTupleDescriptor ROOT::Internal::RPageSourceFile::AttachImpl(RNTupleSeria
    // For the page reads, we rely on the I/O scheduler to define the read requests
    fFile->SetBuffering(false);
 
+   // Set file size once after buffering is turned off
+   fFileSize = fFile->GetSize();
+
    return desc;
 }
 
@@ -499,8 +578,16 @@ ROOT::Internal::RPageRef ROOT::Internal::RPageSourceFile::LoadPageImpl(ColumnHan
       directReadBuffer = MakeUninitArray<unsigned char>(sealedPage.GetBufferSize());
       {
          RNTupleAtomicTimer timer(fCounters->fTimeWallRead, fCounters->fTimeCpuRead);
-         fReader.ReadBuffer(directReadBuffer.get(), sealedPage.GetBufferSize(),
-                            pageInfo.GetLocator().GetPosition<std::uint64_t>());
+         const auto offset = pageInfo.GetLocator().GetPosition<std::uint64_t>();
+         // Track seek distance (excluding file structure reads)
+         R__ASSERT(fFileCounters);
+         if (fLastOffset != 0) {
+            const auto distance = static_cast<std::uint64_t>(std::abs(
+               static_cast<std::int64_t>(offset) - static_cast<std::int64_t>(fLastOffset)));
+            fFileCounters->fSzSkip.Add(distance);
+         }
+         fReader.ReadBuffer(directReadBuffer.get(), sealedPage.GetBufferSize(), offset);
+         fLastOffset = offset + sealedPage.GetBufferSize();
       }
       fCounters->fNPageRead.Inc();
       fCounters->fNRead.Inc();
@@ -704,6 +791,18 @@ ROOT::Internal::RPageSourceFile::LoadClusters(std::span<RCluster::RKey> clusterK
                break;
             }
          }
+      }
+
+      // Track seek distance for each read request (excluding file structure reads)
+      R__ASSERT(fFileCounters);
+      for (std::size_t i = 0; i < nBatch; ++i) {
+         const auto offset = readRequests[iReq + i].fOffset;
+         if (fLastOffset != 0) {
+            const auto distance = static_cast<std::uint64_t>(std::abs(
+               static_cast<std::int64_t>(offset) - static_cast<std::int64_t>(fLastOffset)));
+            fFileCounters->fSzSkip.Add(distance);
+         }
+         fLastOffset = offset + readRequests[iReq + i].fSize;
       }
 
       if (nBatch <= 1) {

@@ -1,5 +1,4 @@
 /// \file RNTupleSerialize.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \author Javier Lopez-Gomez <javier.lopez.gomez@cern.ch>
 /// \date 2021-08-02
@@ -18,6 +17,7 @@
 #include <ROOT/RNTupleSerialize.hxx>
 #include <ROOT/RNTupleTypes.hxx>
 #include <ROOT/RNTupleUtils.hxx>
+#include <ROOT/BitUtils.hxx>
 
 #include <RVersion.h>
 #include <TBufferFile.h>
@@ -73,6 +73,8 @@ ROOT::RResult<std::uint32_t> SerializeField(const ROOT::RFieldDescriptor &fieldD
       flags |= RNTupleSerializer::kFlagProjectedField;
    if (fieldDesc.GetTypeChecksum().has_value())
       flags |= RNTupleSerializer::kFlagHasTypeChecksum;
+   if (fieldDesc.IsSoACollection())
+      flags |= RNTupleSerializer::kFlagIsSoACollection;
    pos += RNTupleSerializer::SerializeUInt16(flags, *where);
 
    pos += RNTupleSerializer::SerializeString(fieldDesc.GetFieldName(), *where);
@@ -219,6 +221,10 @@ DeserializeField(const void *buffer, std::uint64_t bufSize, ROOT::Internal::RFie
       std::uint32_t typeChecksum;
       bytes += RNTupleSerializer::DeserializeUInt32(bytes, typeChecksum);
       fieldDesc.TypeChecksum(typeChecksum);
+   }
+
+   if (flags & RNTupleSerializer::kFlagIsSoACollection) {
+      fieldDesc.IsSoACollection(true);
    }
 
    return frameSize;
@@ -499,7 +505,7 @@ ROOT::RResult<void> DeserializeLocatorPayloadObject64(const unsigned char *buffe
       locator.SetNBytesOnStorage(nBytesOnStorage);
       RNTupleSerializer::DeserializeUInt64(buffer + sizeof(std::uint64_t), location);
    } else {
-      return R__FAIL("invalid DAOS locator payload size: " + std::to_string(sizeofLocatorPayload));
+      return R__FAIL("invalid Object64 locator payload size: " + std::to_string(sizeofLocatorPayload));
    }
    locator.SetPosition(ROOT::RNTupleLocatorObject64{location});
    return ROOT::RResult<void>::Success();
@@ -1084,10 +1090,16 @@ ROOT::Internal::RNTupleSerializer::SerializeLocator(const RNTupleLocator &locato
       size += SerializeLocatorPayloadObject64(locator, payloadp);
       locatorType = 0x02;
       break;
+   case RNTupleLocator::kTypeS3:
+      size += SerializeLocatorPayloadObject64(locator, payloadp);
+      locatorType = 0x03;
+      break;
    default:
       if (locator.GetType() == ROOT::Internal::kTestLocatorType) {
-         // For the testing locator, use the same payload as Object64. We're not gonna really read it back anyway.
-         size += SerializeLocatorPayloadObject64(locator, payloadp);
+         // For the testing locator, use the same payload format as Object64. We won't read it back anyway.
+         RNTupleLocator dummy;
+         dummy.SetType(RNTupleLocator::kTypeDAOS);
+         size += SerializeLocatorPayloadObject64(dummy, payloadp);
          locatorType = 0x7e;
       } else {
          return R__FAIL("locator has unknown type");
@@ -1128,6 +1140,10 @@ ROOT::RResult<std::uint32_t> ROOT::Internal::RNTupleSerializer::DeserializeLocat
          break;
       case 0x02:
          locator.SetType(RNTupleLocator::kTypeDAOS);
+         DeserializeLocatorPayloadObject64(bytes, payloadSize, locator);
+         break;
+      case 0x03:
+         locator.SetType(RNTupleLocator::kTypeS3);
          DeserializeLocatorPayloadObject64(bytes, payloadSize, locator);
          break;
       default: locator.SetType(RNTupleLocator::kTypeUnknown);
@@ -1317,7 +1333,7 @@ void ROOT::Internal::RNTupleSerializer::RContext::MapSchema(const ROOT::RNTupleD
    if (!forHeaderExtension) {
       fieldTrees.emplace_back(fieldZeroId);
    } else if (auto xHeader = desc.GetHeaderExtension()) {
-      fieldTrees = xHeader->GetTopLevelFields(desc);
+      fieldTrees = xHeader->GetTopMostFields(desc);
    }
    depthFirstTraversal(fieldTrees, [&](ROOT::DescriptorId_t fieldId) { MapFieldId(fieldId); });
    depthFirstTraversal(fieldTrees, [&](ROOT::DescriptorId_t fieldId) {
@@ -1613,7 +1629,6 @@ ROOT::Internal::RNTupleSerializer::SerializeHeader(void *buffer, const ROOT::RNT
    void **where = (buffer == nullptr) ? &buffer : reinterpret_cast<void **>(&pos);
 
    pos += SerializeEnvelopePreamble(kEnvelopeTypeHeader, *where);
-   // So far we don't make use of feature flags
    if (auto res = SerializeFeatureFlags(desc.GetFeatureFlags(), *where)) {
       pos += res.Unwrap();
    } else {
@@ -1753,8 +1768,9 @@ ROOT::RResult<std::uint32_t> ROOT::Internal::RNTupleSerializer::SerializeFooter(
 
    pos += SerializeEnvelopePreamble(kEnvelopeTypeFooter, *where);
 
-   // So far we don't make use of footer feature flags
-   if (auto res = SerializeFeatureFlags(std::vector<std::uint64_t>(), *where)) {
+   // NOTE: we currently serialize all feature flags in the footer, even those that were already written in the
+   // header. This is fine, as they will be logically OR-ed together during deserialization.
+   if (auto res = SerializeFeatureFlags(desc.GetFeatureFlags(), *where)) {
       pos += res.Unwrap();
    } else {
       return R__FORWARD_ERROR(res);
@@ -1856,6 +1872,19 @@ ROOT::Internal::RNTupleSerializer::SerializeAttributeSet(const Experimental::RNT
    }
 }
 
+static ROOT::RResult<void> CheckFeatureFlags(const std::vector<std::uint64_t> &featureFlags)
+{
+   for (std::size_t i = 0; i < featureFlags.size(); ++i) {
+      if (!featureFlags[i])
+         continue;
+      // NOTE: this assumes all valid feature flags are consecutive, thus we can just check the highest one set.
+      unsigned int highestBitSet = 64 * i + (63 - ROOT::Internal::LeadingZeroes(featureFlags[i]));
+      if (highestBitSet >= ROOT::RNTupleDescriptor::kFeatureFlag_COUNT)
+         return R__FAIL("unsupported format feature: " + std::to_string(highestBitSet));
+   }
+   return ROOT::RResult<void>::Success();
+}
+
 ROOT::RResult<void> ROOT::Internal::RNTupleSerializer::DeserializeHeader(const void *buffer, std::uint64_t bufSize,
                                                                          RNTupleDescriptorBuilder &descBuilder)
 {
@@ -1877,13 +1906,8 @@ ROOT::RResult<void> ROOT::Internal::RNTupleSerializer::DeserializeHeader(const v
    } else {
       return R__FORWARD_ERROR(res);
    }
-   for (std::size_t i = 0; i < featureFlags.size(); ++i) {
-      if (!featureFlags[i])
-         continue;
-      unsigned int bit = 0;
-      while (!(featureFlags[i] & (static_cast<uint64_t>(1) << bit)))
-         bit++;
-      return R__FAIL("unsupported format feature: " + std::to_string(i * 64 + bit));
+   if (auto res = CheckFeatureFlags(featureFlags); !res) {
+      return R__FORWARD_ERROR(res);
    }
 
    std::string name;
@@ -1937,9 +1961,8 @@ ROOT::RResult<void> ROOT::Internal::RNTupleSerializer::DeserializeFooter(const v
    } else {
       return R__FORWARD_ERROR(res);
    }
-   for (auto f : featureFlags) {
-      if (f)
-         R__LOG_WARNING(ROOT::Internal::NTupleLog()) << "Unsupported feature flag! " << f;
+   if (auto res = CheckFeatureFlags(featureFlags); !res) {
+      return R__FORWARD_ERROR(res);
    }
 
    std::uint64_t xxhash3{0};

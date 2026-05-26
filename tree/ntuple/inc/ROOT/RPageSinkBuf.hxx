@@ -1,5 +1,4 @@
 /// \file ROOT/RPageSinkBuf.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \author Max Orok <maxwellorok@gmail.com>
 /// \author Javier Lopez-Gomez <javier.lopez.gomez@cern.ch>
@@ -149,9 +148,12 @@ public:
    RStagedCluster StageCluster(ROOT::NTupleSize_t nNewEntries) final;
    void CommitStagedClusters(std::span<RStagedCluster> clusters) final;
    void CommitClusterGroup() final;
-   void CommitDatasetImpl() final;
+   RNTupleLink CommitDatasetImpl() final;
+   void CommitAttributeSet(std::string_view attrSetName, const RNTupleLink &attrAnchorInfo) final;
 
    RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements) final;
+
+   std::unique_ptr<RPageSink> CloneAsHidden(std::string_view name, const RNTupleWriteOptions &opts) const final;
 }; // RPageSinkBuf
 
 } // namespace Internal

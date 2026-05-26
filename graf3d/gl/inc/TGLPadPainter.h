@@ -12,10 +12,11 @@
 #ifndef ROOT_TGLPadPainter
 #define ROOT_TGLPadPainter
 
-#include "TVirtualPadPainter.h"
+#include "TPadPainterBase.h"
 #include "TGLFontManager.h"
 #include "TGLPadUtils.h"
 #include "TPoint.h"
+#include "GuiTypes.h"
 
 #include <vector>
 
@@ -25,12 +26,15 @@ class TRadialGradient;
 The _main_ purpose of TGLPadPainter is to enable 2d gl raphics
 inside standard TPad/TCanvas.
 */
-class TGLPadPainter : public TVirtualPadPainter {
+class TGLPadPainter : public TPadPainterBase {
 private:
    Rgl::Pad::PolygonStippleSet fSSet;
    Rgl::Pad::Tesselator        fTess;
    Rgl::Pad::MarkerPainter     fMarker;
    Rgl::Pad::GLLimits          fLimits;
+
+   WinContext_t   fWinContext; // context of selected drawable
+   TAttFill       fGlFillAtt;  // fill attributes used for GL
 
    std::vector<Double_t>       fVs;//Vertex buffer for tesselator.
 
@@ -44,50 +48,41 @@ private:
 
    Bool_t                      fLocked;
 
+   void SelectGLFont(Font_t font, Float_t size);
+
    template<class Char_t>
    void DrawTextHelper(Double_t x, Double_t y, const Char_t *text, ETextMode mode);
+
+   template<class Char_t>
+   void TextExtentHelper(Font_t font, Double_t size, UInt_t &w, UInt_t &h, const Char_t *text);
+
+   template<class Char_t>
+   void TextAscentDescentHelper(Font_t font, Double_t size, UInt_t &a, UInt_t &d, const Char_t *text);
+
 public:
    TGLPadPainter();
 
-   //Final overriders for TVirtualPadPainter pure virtual functions.
-   //1. Part, which simply delegates to TVirtualX.
-   //Line attributes.
-   Color_t  GetLineColor() const override;
-   Style_t  GetLineStyle() const override;
-   Width_t  GetLineWidth() const override;
-
-   void     SetLineColor(Color_t lcolor) override;
-   void     SetLineStyle(Style_t lstyle) override;
-   void     SetLineWidth(Width_t lwidth) override;
-   //Fill attributes.
-   Color_t  GetFillColor() const override;
-   Style_t  GetFillStyle() const override;
-   Bool_t   IsTransparent() const override;
-
-   void     SetFillColor(Color_t fcolor) override;
-   void     SetFillStyle(Style_t fstyle) override;
    void     SetOpacity(Int_t percent) override;
-   //Text attributes.
-   Short_t  GetTextAlign() const override;
-   Float_t  GetTextAngle() const override;
-   Color_t  GetTextColor() const override;
-   Font_t   GetTextFont()  const override;
-   Float_t  GetTextSize()  const override;
    Float_t  GetTextMagnitude() const override;
 
-   void     SetTextAlign(Short_t align) override;
-   void     SetTextAngle(Float_t tangle) override;
-   void     SetTextColor(Color_t tcolor) override;
-   void     SetTextFont(Font_t tfont) override;
-   void     SetTextSize(Float_t tsize) override;
-   void     SetTextSizePixels(Int_t npixels) override;
+
+   void      OnPad(TVirtualPad *) override;
+
+   // Overwrite only attributes setters
+   void      SetAttFill(const TAttFill &att) override;
+   void      SetAttLine(const TAttLine &att) override;
+   void      SetAttMarker(const TAttMarker &att) override;
 
    //2. "Off-screen management" part.
    Int_t    CreateDrawable(UInt_t w, UInt_t h) override;
    void     ClearDrawable() override;
+   void     ClearWindow(Int_t device) override;
+   Int_t    ResizeDrawable(Int_t device, UInt_t w, UInt_t h) override;
    void     CopyDrawable(Int_t device, Int_t px, Int_t py) override;
    void     DestroyDrawable(Int_t device) override;
    void     SelectDrawable(Int_t device) override;
+   void     UpdateDrawable(Int_t mode) override;
+   void     SetDrawMode(Int_t device, Int_t mode) override;
 
    void     InitPainter() override;
    void     InvalidateCS() override;
@@ -115,6 +110,12 @@ public:
    void     DrawTextNDC(Double_t x, Double_t y, const char *text, ETextMode mode) override;
    void     DrawTextNDC(Double_t, Double_t, const wchar_t *, ETextMode) override;
 
+   void     GetTextExtent(Font_t font, Double_t size, UInt_t &w, UInt_t &h, const char *mess) override;
+   void     GetTextExtent(Font_t font, Double_t size, UInt_t &w, UInt_t &h, const wchar_t *mess) override;
+   void     GetTextAscentDescent(Font_t font, Double_t size, UInt_t &a, UInt_t &d, const char *mess) override;
+   void     GetTextAscentDescent(Font_t font, Double_t size, UInt_t &a, UInt_t &d, const wchar_t *mess) override;
+   UInt_t   GetTextAdvance(Font_t font, Double_t size, const char *text, Bool_t kern) override;
+
    //jpg, png, gif and bmp output.
    void     SaveImage(TVirtualPad *pad, const char *fileName, Int_t type) const override;
 
@@ -122,6 +123,11 @@ public:
    void     DrawPixels(const unsigned char *pixelData, UInt_t width, UInt_t height,
                        Int_t dstX, Int_t dstY, Bool_t enableBlending) override;
 
+   Bool_t IsNative() const override { return kTRUE; }
+
+   Bool_t   IsCocoa() const override;
+
+   Bool_t   IsSupportAlpha() const override { return kTRUE; }
 
 private:
 

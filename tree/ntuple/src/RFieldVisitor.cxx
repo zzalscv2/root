@@ -1,5 +1,4 @@
 /// \file RFieldVisitor.cxx
-/// \ingroup NTuple
 /// \author Simon Leisibach <simon.leisibach@gmail.com>
 /// \date 2019-06-11
 
@@ -62,8 +61,6 @@ void ROOT::Internal::RPrintSchemaVisitor::SetNumFields(int n)
 
 void ROOT::Internal::RPrintSchemaVisitor::VisitField(const ROOT::RFieldBase &field)
 {
-   fOutput << fFrameSymbol << ' ';
-
    std::string key = fTreePrefix;
    key += "Field " + fFieldNoPrefix + std::to_string(fFieldNo);
    fOutput << RNTupleFormatter::FitString(key, fAvailableSpaceKeyString);
@@ -72,8 +69,7 @@ void ROOT::Internal::RPrintSchemaVisitor::VisitField(const ROOT::RFieldBase &fie
    std::string value = field.GetFieldName();
    if (!field.GetTypeName().empty())
       value += " (" + field.GetTypeName() + ")";
-   fOutput << RNTupleFormatter::FitString(value, fAvailableSpaceValueString);
-   fOutput << fFrameSymbol << std::endl;
+   fOutput << value << '\n';
 
    auto subfields = field.GetConstSubfields();
    auto fieldNo = 1;

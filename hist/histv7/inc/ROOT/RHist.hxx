@@ -7,6 +7,7 @@
 
 #include "RAxisVariant.hxx"
 #include "RBinIndex.hxx"
+#include "RBinIndexMultiDimRange.hxx"
 #include "RCategoricalAxis.hxx"
 #include "RHistEngine.hxx"
 #include "RHistStats.hxx"
@@ -51,7 +52,7 @@ An object can have arbitrary dimensionality determined at run-time. The axis con
 RAxisVariant:
 \code
 std::vector<ROOT::Experimental::RAxisVariant> axes;
-axes.push_back(ROOT::Experimental::RRegularAxis(10, 5, 15));
+axes.push_back(ROOT::Experimental::RRegularAxis(10, {5, 15}));
 axes.push_back(ROOT::Experimental::RVariableBinAxis({1, 10, 100, 1000}));
 ROOT::Experimental::RHist<int> hist(axes);
 // hist.GetNDimensions() will return 2
@@ -145,6 +146,9 @@ public:
 
    ~RHist() = default;
 
+   /// \name Accessors
+   /// \{
+
    const RHistEngine<BinContentType> &GetEngine() const { return fEngine; }
    const RHistStats &GetStats() const { return fStats; }
 
@@ -153,12 +157,21 @@ public:
    std::uint64_t GetTotalNBins() const { return fEngine.GetTotalNBins(); }
 
    std::uint64_t GetNEntries() const { return fStats.GetNEntries(); }
+
+   /// \}
+   /// \name Computations
+   /// \{
+
    /// \copydoc RHistStats::ComputeNEffectiveEntries()
    double ComputeNEffectiveEntries() const { return fStats.ComputeNEffectiveEntries(); }
    /// \copydoc RHistStats::ComputeMean()
    double ComputeMean(std::size_t dim = 0) const { return fStats.ComputeMean(dim); }
    /// \copydoc RHistStats::ComputeStdDev()
    double ComputeStdDev(std::size_t dim = 0) const { return fStats.ComputeStdDev(dim); }
+
+   /// \}
+   /// \name Accessors
+   /// \{
 
    /// Get the content of a single bin.
    ///
@@ -188,6 +201,29 @@ public:
    ///
    /// \code
    /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
+   /// std::vector<ROOT::Experimental::RBinIndex> indices = {3, 5};
+   /// int content = hist.GetBinContent(indices);
+   /// \endcode
+   ///
+   /// \note Compared to TH1 conventions, the first normal bin has index 0 and underflow and overflow bins are special
+   /// values. See also the class documentation of RBinIndex.
+   ///
+   /// Throws an exception if the number of indices does not match the axis configuration or the bin is not found.
+   ///
+   /// \param[in] indices the array of indices for each axis
+   /// \return the bin content
+   /// \par See also
+   /// the \ref GetBinContent(const A &... args) const "variadic function template overload" accepting arguments
+   /// directly
+   const BinContentType &GetBinContent(const std::vector<RBinIndex> &indices) const
+   {
+      return fEngine.GetBinContent(indices);
+   }
+
+   /// Get the content of a single bin.
+   ///
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
    /// int content = hist.GetBinContent(ROOT::Experimental::RBinIndex(3), ROOT::Experimental::RBinIndex(5));
    /// // ... or construct the RBinIndex arguments implicitly from integers:
    /// content = hist.GetBinContent(3, 5);
@@ -201,70 +237,79 @@ public:
    /// \param[in] args the arguments for each axis
    /// \return the bin content
    /// \par See also
-   /// the \ref GetBinContent(const std::array<RBinIndex, N> &indices) const "function overload" accepting
-   /// `std::array`
+   /// the function overloads accepting \ref GetBinContent(const std::array<RBinIndex, N> &indices) const "`std::array`"
+   /// or \ref GetBinContent(const std::vector<RBinIndex> &indices) const "`std::vector`"
    template <typename... A>
    const BinContentType &GetBinContent(const A &...args) const
    {
       return fEngine.GetBinContent(args...);
    }
 
-   /// Add all bin contents and statistics of another histogram.
+   /// Get the multidimensional range of all bins.
    ///
-   /// Throws an exception if the axes configurations are not identical.
+   /// \return the multidimensional range
+   RBinIndexMultiDimRange GetFullMultiDimRange() const { return fEngine.GetFullMultiDimRange(); }
+
+   /// Set the content of a single bin.
    ///
-   /// \param[in] other another histogram
-   void Add(const RHist &other)
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
+   /// std::array<ROOT::Experimental::RBinIndex, 2> indices = {3, 5};
+   /// int value = /* ... */;
+   /// hist.SetBinContent(indices, value);
+   /// \endcode
+   ///
+   /// \note Compared to TH1 conventions, the first normal bin has index 0 and underflow and overflow bins are special
+   /// values. See also the class documentation of RBinIndex.
+   ///
+   /// Throws an exception if the number of indices does not match the axis configuration or the bin is not found.
+   ///
+   /// \warning Setting the bin content will taint the global histogram statistics. Attempting to access its values, for
+   /// example calling GetNEntries(), will throw exceptions.
+   ///
+   /// \param[in] indices the array of indices for each axis
+   /// \param[in] value the new value of the bin content
+   /// \par See also
+   /// the \ref SetBinContent(const A &... args) "variadic function template overload" accepting arguments directly
+   template <std::size_t N, typename V>
+   void SetBinContent(const std::array<RBinIndex, N> &indices, const V &value)
    {
-      fEngine.Add(other.fEngine);
-      fStats.Add(other.fStats);
+      fEngine.SetBinContent(indices, value);
+      fStats.Taint();
    }
 
-   /// Add all bin contents and statistics of another histogram using atomic instructions.
+   /// Set the content of a single bin.
    ///
-   /// Throws an exception if the axes configurations are not identical.
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
+   /// int value = /* ... */;
+   /// hist.SetBinContent(ROOT::Experimental::RBinIndex(3), ROOT::Experimental::RBinIndex(5), value);
+   /// // ... or construct the RBinIndex arguments implicitly from integers:
+   /// hist.SetBinContent(3, 5, value);
+   /// \endcode
    ///
-   /// \param[in] other another histogram that must not be modified during the operation
-   void AddAtomic(const RHist &other)
+   /// \note Compared to TH1 conventions, the first normal bin has index 0 and underflow and overflow bins are special
+   /// values. See also the class documentation of RBinIndex.
+   ///
+   /// Throws an exception if the number of arguments does not match the axis configuration or the bin is not found.
+   ///
+   /// \warning Setting the bin content will taint the global histogram statistics. Attempting to access its values, for
+   /// example calling GetNEntries(), will throw exceptions.
+   ///
+   /// \param[in] args the arguments for each axis and the new value of the bin content
+   /// \par See also
+   /// the \ref SetBinContent(const std::array<RBinIndex, N> &indices, const V &value) "function overload" accepting
+   /// `std::array`
+   template <typename... A>
+   void SetBinContent(const A &...args)
    {
-      fEngine.AddAtomic(other.fEngine);
-      fStats.AddAtomic(other.fStats);
+      fEngine.SetBinContent(args...);
+      fStats.Taint();
    }
 
-   /// Clear all bin contents and statistics.
-   void Clear()
-   {
-      fEngine.Clear();
-      fStats.Clear();
-   }
-
-   /// Clone this histogram.
-   ///
-   /// Copying all bin contents can be an expensive operation, depending on the number of bins.
-   ///
-   /// \return the cloned object
-   RHist Clone() const
-   {
-      RHist h(fEngine.Clone());
-      h.fStats = fStats;
-      return h;
-   }
-
-   /// Convert this histogram to a different bin content type.
-   ///
-   /// There is no bounds checking to make sure that the converted values can be represented. Note that it is not
-   /// possible to convert to RBinWithError since the information about individual weights has been lost since filling.
-   ///
-   /// Converting all bin contents can be an expensive operation, depending on the number of bins.
-   ///
-   /// \return the converted object
-   template <typename U>
-   RHist<U> Convert() const
-   {
-      RHist<U> h(fEngine.template Convert<U>());
-      h.fStats = fStats;
-      return h;
-   }
+   /// \}
+   /// \name Filling
+   /// \{
 
    /// Fill an entry into the histogram.
    ///
@@ -353,6 +398,67 @@ public:
       }
    }
 
+   /// \}
+   /// \name Operations
+   /// \{
+
+   /// Add all bin contents and statistics of another histogram.
+   ///
+   /// Throws an exception if the axes configurations are not identical.
+   ///
+   /// \param[in] other another histogram
+   void Add(const RHist &other)
+   {
+      fEngine.Add(other.fEngine);
+      fStats.Add(other.fStats);
+   }
+
+   /// Add all bin contents and statistics of another histogram using atomic instructions.
+   ///
+   /// Throws an exception if the axes configurations are not identical.
+   ///
+   /// \param[in] other another histogram that must not be modified during the operation
+   void AddAtomic(const RHist &other)
+   {
+      fEngine.AddAtomic(other.fEngine);
+      fStats.AddAtomic(other.fStats);
+   }
+
+   /// Clear all bin contents and statistics.
+   void Clear()
+   {
+      fEngine.Clear();
+      fStats.Clear();
+   }
+
+   /// Clone this histogram.
+   ///
+   /// Copying all bin contents can be an expensive operation, depending on the number of bins.
+   ///
+   /// \return the cloned object
+   RHist Clone() const
+   {
+      RHist h(fEngine.Clone());
+      h.fStats = fStats;
+      return h;
+   }
+
+   /// Convert this histogram to a different bin content type.
+   ///
+   /// There is no bounds checking to make sure that the converted values can be represented. Note that it is not
+   /// possible to convert to RBinWithError since the information about individual weights has been lost since filling.
+   ///
+   /// Converting all bin contents can be an expensive operation, depending on the number of bins.
+   ///
+   /// \return the converted object
+   template <typename U>
+   RHist<U> Convert() const
+   {
+      RHist<U> h(fEngine.template Convert<U>());
+      h.fStats = fStats;
+      return h;
+   }
+
    /// Scale all histogram bin contents and statistics.
    ///
    /// This method is not available for integral bin content types.
@@ -363,6 +469,117 @@ public:
       fEngine.Scale(factor);
       fStats.Scale(factor);
    }
+
+   /// Slice this histogram with an RSliceSpec per dimension.
+   ///
+   /// With a range, only the specified bins are retained. All other bin contents are transferred to the underflow and
+   /// overflow bins:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist(/* one dimension */);
+   /// // Fill the histogram with a number of entries...
+   /// auto sliced = hist.Slice({hist.GetAxes()[0].GetNormalRange(1, 5)});
+   /// // The returned histogram will have 4 normal bins, an underflow and an overflow bin.
+   /// \endcode
+   ///
+   /// Slicing can also perform operations per dimension, see RSliceSpec. RSliceSpec::ROperationRebin allows to rebin
+   /// the histogram axis, grouping a number of normal bins into a new one:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist(/* one dimension */);
+   /// // Fill the histogram with a number of entries...
+   /// auto rebinned = hist.Slice(ROOT::Experimental::RSliceSpec::ROperationRebin(2));
+   /// // The returned histogram has groups of two normal bins merged.
+   /// \endcode
+   ///
+   /// RSliceSpec::ROperationSum sums the bin contents along that axis, which allows to project to a lower-dimensional
+   /// histogram:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
+   /// // Fill the histogram with a number of entries...
+   /// auto projected = hist.Slice(ROOT::Experimental::RSliceSpec{}, ROOT::Experimental::RSliceSpec::ROperationSum{});
+   /// // The returned histogram has one dimension, with bin contents summed along the second axis.
+   /// \endcode
+   /// Note that it is not allowed to sum along all histogram axes because the return value would be a scalar.
+   ///
+   /// Ranges and operations can be combined. In that case, the range is applied before the operation.
+   ///
+   /// \warning Combining a range and the sum operation drops bin contents, which will taint the global histogram
+   /// statistics. Attempting to access its values, for example calling GetNEntries(), will throw exceptions.
+   ///
+   /// \param[in] sliceSpecs the slice specifications for each axis
+   /// \return the sliced histogram
+   /// \par See also
+   /// the \ref Slice(const A &... args) const "variadic function template overload" accepting arguments directly
+   RHist Slice(const std::vector<RSliceSpec> &sliceSpecs) const
+   {
+      bool dropped = false;
+      RHist sliced(fEngine.SliceImpl(sliceSpecs, dropped));
+      assert(sliced.fStats.GetNDimensions() == sliced.GetNDimensions());
+      if (dropped || fStats.IsTainted()) {
+         sliced.fStats.Taint();
+      } else {
+         sliced.fStats.fNEntries = fStats.fNEntries;
+         sliced.fStats.fSumW = fStats.fSumW;
+         sliced.fStats.fSumW2 = fStats.fSumW2;
+         std::size_t slicedDim = 0;
+         for (std::size_t i = 0; i < sliceSpecs.size(); i++) {
+            // A sum operation makes the dimension disappear.
+            if (sliceSpecs[i].GetOperationSum() == nullptr) {
+               sliced.fStats.fDimensionStats[slicedDim] = fStats.fDimensionStats[i];
+               slicedDim++;
+            }
+         }
+         assert(slicedDim == sliced.GetNDimensions());
+      }
+      return sliced;
+   }
+
+   /// Slice this histogram with an RSliceSpec per dimension.
+   ///
+   /// With a range, only the specified bins are retained. All other bin contents are transferred to the underflow and
+   /// overflow bins:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist(/* one dimension */);
+   /// // Fill the histogram with a number of entries...
+   /// auto sliced = hist.Slice(hist.GetAxes()[0].GetNormalRange(1, 5));
+   /// // The returned histogram will have 4 normal bins, an underflow and an overflow bin.
+   /// \endcode
+   ///
+   /// Slicing can also perform operations per dimension, see RSliceSpec. RSliceSpec::ROperationRebin allows to rebin
+   /// the histogram axis, grouping a number of normal bins into a new one:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist(/* one dimension */);
+   /// // Fill the histogram with a number of entries...
+   /// auto rebinned = hist.Slice(ROOT::Experimental::RSliceSpec::ROperationRebin(2));
+   /// // The returned histogram has groups of two normal bins merged.
+   /// \endcode
+   ///
+   /// RSliceSpec::ROperationSum sums the bin contents along that axis, which allows to project to a lower-dimensional
+   /// histogram:
+   /// \code
+   /// ROOT::Experimental::RHist<int> hist({/* two dimensions */});
+   /// // Fill the histogram with a number of entries...
+   /// auto projected = hist.Slice(ROOT::Experimental::RSliceSpec{}, ROOT::Experimental::RSliceSpec::ROperationSum{});
+   /// // The returned histogram has one dimension, with bin contents summed along the second axis.
+   /// \endcode
+   /// Note that it is not allowed to sum along all histogram axes because the return value would be a scalar.
+   ///
+   /// Ranges and operations can be combined. In that case, the range is applied before the operation.
+   ///
+   /// \warning Combining a range and the sum operation drops bin contents, which will taint the global histogram
+   /// statistics. Attempting to access its values, for example calling GetNEntries(), will throw exceptions.
+   ///
+   /// \param[in] args the arguments for each axis
+   /// \return the sliced histogram
+   /// \par See also
+   /// the \ref Slice(const std::vector<RSliceSpec> &sliceSpecs) const "function overload" accepting `std::vector`
+   template <typename... A>
+   RHist Slice(const A &...args) const
+   {
+      std::vector<RSliceSpec> sliceSpecs{args...};
+      return Slice(sliceSpecs);
+   }
+
+   /// \}
 
    /// %ROOT Streamer function to throw when trying to store an object of this class.
    void Streamer(TBuffer &) { throw std::runtime_error("unable to store RHist"); }

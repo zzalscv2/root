@@ -1760,59 +1760,6 @@ void CallWriteStreamer(const ROOT::TMetaUtils::AnnotatedRecordDecl &cl,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-void GenerateLinkdef(llvm::cl::list<std::string> &InputFiles,
-                     std::string &code_for_parser)
-{
-   code_for_parser += "#ifdef __CLING__\n\n";
-   code_for_parser += "#pragma link off all globals;\n";
-   code_for_parser += "#pragma link off all classes;\n";
-   code_for_parser += "#pragma link off all functions;\n\n";
-
-   for (std::string& arg : InputFiles) {
-      char trail[3];
-      int nostr = 0, noinp = 0, bcnt = 0, l = arg.length() - 1;
-      for (int j = 0; j < 3; j++) {
-         if (arg[l] == '-') {
-            arg[l] = '\0';
-            nostr = 1;
-            l--;
-         }
-         if (arg[l] == '!') {
-            arg[l] = '\0';
-            noinp = 1;
-            l--;
-         }
-         if (arg[l] == '+') {
-            arg[l] = '\0';
-            bcnt = 1;
-            l--;
-         }
-      }
-      if (nostr || noinp) {
-         trail[0] = 0;
-         if (nostr) strlcat(trail, "-", 3);
-         if (noinp) strlcat(trail, "!", 3);
-      }
-      if (bcnt) {
-         strlcpy(trail, "+", 3);
-         if (nostr)
-            ROOT::TMetaUtils::Error(nullptr, "option + mutual exclusive with -\n");
-      }
-      llvm::SmallString<256> filestem = llvm::sys::path::filename(arg);
-      llvm::sys::path::replace_extension(filestem, "");
-
-      code_for_parser += "#pragma link C++ class ";
-      code_for_parser += filestem.str().str();
-      if (nostr || noinp || bcnt)
-         code_for_parser += trail;
-      code_for_parser += ";\n";
-   }
-
-   code_for_parser += "\n#endif\n";
-}
-
-////////////////////////////////////////////////////////////////////////////////
 /// Find file name in path specified via -I statements to Cling.
 /// Return false if the file can not be found.
 /// If the file is found, set pname to the full path name and return true.
@@ -3983,7 +3930,7 @@ int RootClingMain(int argc,
 
    const char *etcDir = gDriverConfig->fTROOT__GetEtcDir();
    std::string llvmResourceDir = etcDir ? std::string(etcDir) + "/cling" : "";
-   
+
    if (gBareClingSubcommand) {
       std::vector<const char *> clingArgsC;
       clingArgsC.push_back(executableFileName);
@@ -4159,7 +4106,7 @@ int RootClingMain(int argc,
    // cling-only arguments
    if (etcDir)
       clingArgs.push_back(std::string("-I") + llvm::sys::path::convert_to_slash(etcDir));
-   
+
    // We do not want __ROOTCLING__ in the pch!
    if (!gOptGeneratePCH) {
       clingArgs.push_back("-D__ROOTCLING__");
@@ -4563,11 +4510,6 @@ int RootClingMain(int argc,
       return 1;
    }
 
-   if (linkdef.empty()) {
-      // Generate autolinkdef
-      GenerateLinkdef(gOptDictionaryHeaderFiles, interpPragmaSource);
-   }
-
    // Check if code goes to stdout or rootcling file
    std::ofstream fileout;
    string main_dictname(gOptDictionaryFileName.getValue());
@@ -4674,7 +4616,7 @@ int RootClingMain(int argc,
       // interpPragmaSource and we still need to process it.
 
       LinkdefReader ldefr(interp, constructorTypes);
-      
+
       if (!ldefr.Parse(selectionRules, interpPragmaSource, clingArgs,
                        llvmResourceDir.c_str())) {
          ROOT::TMetaUtils::Error(nullptr, "Parsing #pragma failed %s\n", linkdefFilename.c_str());
@@ -4717,6 +4659,12 @@ int RootClingMain(int argc,
    // Speed up the operations with rules
    selectionRules.FillCache();
    selectionRules.Optimize();
+
+   // Addresses ROOT-5174
+   if (gBuildingROOT? 0 : 2 >= selectionRules.Size() && !gOptCxxModule && !isGenreflex) {
+      ROOT::TMetaUtils::Error(nullptr, "No selection rules specified and creation of C++ module not requested: did you forget to specify a selection file or to request the creation of a C++ module?\n");
+      return 1;
+   }
 
    if (isGenreflex){
       if (0 != selectionRules.CheckDuplicates()){
@@ -5584,6 +5532,7 @@ int GenReflexMain(int argc, char **argv)
       "        Default value is 'false'\n"
       "      - rntupleStreamerMode [true/false]: enforce streamed or native writing for RNTuple.\n"
       "        If unset, RNTuple stores classes in split mode or fails if the class cannot be split.\n"
+      "      - rntupleSoARecord [class name]: marks the class as an RNTuple SoA layout for the underlying record\n"
       "      - noInputOperator [true/false]: turns off input operator generation if set\n"
       "        to 'true'. Default value is 'false'\n"
       "      Example XML:\n"
@@ -5594,6 +5543,7 @@ int GenReflexMain(int argc, char **argv)
       "                 [id=\"xxxx\"] [noStreamer=\"true/false\"]\n"
       "                 [noInputOperator=\"true/false\"]\n"
       "                 [rntupleStreamerMode=\"true/false\"] />\n"
+      "                 [rntupleSoARecord=\"class_name\"] />\n"
       "          <class name=\"classname\" >\n"
       "            <field name=\"m_transient\" transient=\"true\"/>\n"
       "            <field name=\"m_anothertransient\" persistent=\"false\"/>\n"

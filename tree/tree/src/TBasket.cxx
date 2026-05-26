@@ -9,6 +9,7 @@
  *************************************************************************/
 
 #include <chrono>
+#include <limits>
 
 #include "TBasket.h"
 #include "TBuffer.h"
@@ -31,6 +32,7 @@
 const UInt_t kDisplacementMask = 0xFF000000;  // In the streamer the two highest bytes of
                                               // the fEntryOffset are used to stored displacement.
 
+constexpr auto gMaxInt_t = std::numeric_limits<Int_t>::max();
 
 /** \class TBasket
 \ingroup tree
@@ -575,6 +577,31 @@ Int_t TBasket::ReadBasketBuffers(Long64_t pos, Int_t len, TFile *file)
          memcpy(rawCompressedBuffer, fBufferRef->Buffer(), len);
       }
    }
+   // Sanitize nbytes and lengths
+   if (fKeylen < 0) {
+      Error("ReadBasketBuffers", "The value of fKeylen is incorrect (%d) ; trying to recover by setting it to zero", fKeylen);
+      MakeZombie();
+      fKeylen = 0;
+      return 1;
+   }
+   if (fObjlen < 0) {
+      Error("ReadBasketBuffers", "The value of fObjlen is incorrect (%d) ; trying to recover by setting it to zero", fObjlen);
+      MakeZombie();
+      fObjlen = 0;
+      return 1;
+   }
+   if (fNbytes < 0) {
+      Error("ReadBasketBuffers", "The value of fNbytes is incorrect (%d) ; trying to recover by setting it to zero", fNbytes);
+      MakeZombie();
+      fNbytes = 0;
+      return 1;
+   }
+   if (fKeylen > (gMaxInt_t - fObjlen)) {
+      Error("ReadBasketBuffers", "fObjlen (%d) + fKeylen (%d) > max int (%d): cannot continue to read the key buffer.",
+            fObjlen, fKeylen, gMaxInt_t);
+      MakeZombie();
+      return 1;
+   }
 
    // Initialize buffer to hold the uncompressed data
    // Note that in previous versions we didn't allocate buffers until we verified
@@ -601,11 +628,16 @@ Int_t TBasket::ReadBasketBuffers(Long64_t pos, Int_t len, TFile *file)
       memcpy(rawUncompressedBuffer, rawCompressedBuffer, fKeylen);
       char *rawUncompressedObjectBuffer = rawUncompressedBuffer+fKeylen;
       UChar_t *rawCompressedObjectBuffer = (UChar_t*)rawCompressedBuffer+fKeylen;
-      Int_t nin, nbuf;
+
+      // TODO(jblomer): factor out and combine with UnzipObject() in TKey
+      Int_t nin = 0, nbuf = 0;
       Int_t nout = 0, noutot = 0, nintot = 0;
 
+      Int_t nbytesRemain = fNbytes - fKeylen;
+      Int_t objlenRemain = fObjlen;
+
       // Unzip all the compressed objects in the compressed object buffer.
-      while (true) {
+      while (nbytesRemain >= ROOT::Internal::kZipHeaderSize) {
          // Check the header for errors.
          if (R__unlikely(R__unzip_header(&nin, rawCompressedObjectBuffer, &nbuf) != 0)) {
             Error("ReadBasketBuffers", "Inconsistency found in header (nin=%d, nbuf=%d)", nin, nbuf);
@@ -616,6 +648,9 @@ Int_t TBasket::ReadBasketBuffers(Long64_t pos, Int_t len, TFile *file)
             memcpy(rawUncompressedBuffer+fKeylen, rawCompressedObjectBuffer+fKeylen, fObjlen);
             goto AfterBuffer;
          }
+         if (R__unlikely((nin > nbytesRemain) || (nbuf > objlenRemain))) {
+            break;
+         }
 
          R__unzip(&nin, rawCompressedObjectBuffer, &nbuf, (unsigned char*) rawUncompressedObjectBuffer, &nout);
          if (!nout) break;
@@ -624,6 +659,8 @@ Int_t TBasket::ReadBasketBuffers(Long64_t pos, Int_t len, TFile *file)
          if (noutot >= fObjlen) break;
          rawCompressedObjectBuffer += nin;
          rawUncompressedObjectBuffer += nout;
+         nbytesRemain -= nin;
+         objlenRemain -= nout;
       }
 
       // Make sure the uncompressed numbers are consistent with header.

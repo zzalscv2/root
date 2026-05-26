@@ -17,11 +17,15 @@
 
 #include "TCollectionProxyInfo.h"
 
+#include "ROOT/BitUtils.hxx"
+
 #include <atomic>
 #include <string>
 #include <map>
 #include <cstdlib>
+#include <cstddef>
 #include <vector>
+#include <new>
 
 class TObjArray;
 class TCollectionProxyFactory;

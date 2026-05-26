@@ -1,5 +1,4 @@
 /// \file RNTupleParallelWriter.cxx
-/// \ingroup NTuple
 /// \author Jonas Hahnfeld <jonas.hahnfeld@cern.ch>
 /// \date 2024-02-01
 
@@ -107,12 +106,23 @@ public:
    {
       throw ROOT::RException(R__FAIL("should never commit cluster group via RPageSynchronizingSink"));
    }
-   void CommitDatasetImpl() final
+
+   ROOT::Internal::RNTupleLink CommitDatasetImpl() final
    {
       throw ROOT::RException(R__FAIL("should never commit dataset via RPageSynchronizingSink"));
    }
 
    RSinkGuard GetSinkGuard() final { return RSinkGuard(fMutex); }
+
+   std::unique_ptr<RPageSink> CloneAsHidden(std::string_view, const ROOT::RNTupleWriteOptions &) const final
+   {
+      throw ROOT::RException(R__FAIL("cloning a RPageSynchronizingSink is not implemented yet"));
+   }
+
+   void CommitAttributeSet(std::string_view, const ROOT::Internal::RNTupleLink &) final
+   {
+      throw ROOT::RException(R__FAIL("committing attribute sets is not implemented yet for parallel writing"));
+   }
 };
 
 } // namespace

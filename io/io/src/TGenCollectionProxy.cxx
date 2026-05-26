@@ -28,7 +28,7 @@
 
 /**
 \class TGenVectorProxy
-\ingroup IO
+\ingroup io_other
 Local optimization class.
 
 Collection proxies get copied. On copy we switch the type of the
@@ -78,7 +78,7 @@ public:
 
 /**
 \class TGenVectorBoolProxy
-\ingroup IO
+\ingroup io_other
 Local optimization class.
 
 Collection proxies get copied. On copy we switch the type of the
@@ -179,7 +179,7 @@ public:
 
 /*
 \class TGenListProxy
-\ingroup IO
+\ingroup io_other
 Local optimization class.
 
 Collection proxies get copied. On copy we switch the type of the
@@ -221,7 +221,7 @@ public:
 
 /**
 \class TGenSetProxy
-\ingroup IO
+\ingroup io_other
 Localoptimization class.
 
 Collection proxies get copied. On copy we switch the type of the
@@ -266,7 +266,7 @@ public:
 
 /**
 \class TGenMapProxy
-\ingroup IO
+\ingroup io_other
 Localoptimization class.
 
 Collection proxies get copied. On copy we switch the type of the
@@ -535,7 +535,7 @@ void TGenCollectionProxy::Value::DeleteItem(void* ptr)
 
 /**
  \class TGenCollectionProxy TGenCollectionProxy.cxx
- \ingroup IO
+ \ingroup io_other
 
  Proxy around an arbitrary container, which implements basic
  functionality and iteration.
@@ -1519,8 +1519,7 @@ void TGenCollectionProxy__VectorCreateIterators(void *obj, void **begin_arena, v
       return;
    }
    *begin_arena = vec->data();
-   *end_arena = vec->data() + vec->size();
-
+   *end_arena   = vec->data() + vec->size();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1624,7 +1623,9 @@ TVirtualCollectionProxy::CreateIterators_t TGenCollectionProxy::GetFunctionCreat
 //      fprintf(stderr,"a generic iterator\n");
 
    // TODO could we do better than SlowCreateIterators for RVec?
-   if (fSTL_type==ROOT::kSTLvector || (fProperties & kIsEmulated))
+   if (fProperties & kIsEmulated)
+      return fFunctionCreateIterators = TGenCollectionProxy__VectorCreateIterators;
+   else if (fSTL_type == ROOT::kSTLvector)
       return fFunctionCreateIterators = TGenCollectionProxy__VectorCreateIterators;
    else if ( (fProperties & kIsAssociative) && read)
       return TGenCollectionProxy__StagingCreateIterators;

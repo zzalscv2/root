@@ -1,5 +1,4 @@
 /// \file ROOT/RNTupleProcessor.hxx
-/// \ingroup NTuple
 /// \author Florine de Geus <florine.de.geus@cern.ch>
 /// \date 2024-03-26
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -98,8 +97,10 @@ public:
    /// \return A `std::shared_ptr<T>` if the field is valid in the current entry, or a `nullptr` otherwise.
    std::shared_ptr<T> GetPtr() const
    {
-      if (fProcessorEntry->IsValidField(fFieldIndex))
-         return fProcessorEntry->GetPtr<T>(fFieldIndex);
+      if (fProcessorEntry->IsValidField(fFieldIndex)) {
+         const auto &value = fProcessorEntry->GetValue(fFieldIndex);
+         return value.template GetPtr<T>();
+      }
 
       return nullptr;
    }
@@ -181,8 +182,10 @@ public:
    /// \return A `std::shared_ptr<void>` if the field is valid in the current entry, or a `nullptr` otherwise.
    std::shared_ptr<void> GetPtr() const
    {
-      if (fProcessorEntry->IsValidField(fFieldIndex))
-         return fProcessorEntry->GetPtr<void>(fFieldIndex);
+      if (fProcessorEntry->IsValidField(fFieldIndex)) {
+         const auto &value = fProcessorEntry->GetValue(fFieldIndex);
+         return value.template GetPtr<void>();
+      }
 
       return nullptr;
    }
@@ -250,7 +253,6 @@ class RNTupleProcessor {
 
 protected:
    std::string fProcessorName;
-   std::unique_ptr<ROOT::RNTupleModel> fProtoModel = nullptr;
    std::shared_ptr<Internal::RNTupleProcessorEntry> fEntry = nullptr;
    std::unordered_set<Internal::RNTupleProcessorEntry::FieldIndex_t> fFieldIdxs;
 
@@ -263,13 +265,12 @@ protected:
    std::size_t fCurrentProcessorNumber = 0;    //< Number of the currently open inner processor
 
    /////////////////////////////////////////////////////////////////////////////
-   /// \brief Initialize the processor, by setting `fProtoModel` and creating an (initially empty) `fEntry`, or setting
-   /// an existing one.
+   /// \brief Initialize the processor by creating an (initially empty) `fEntry`, or setting an existing one.
    virtual void Initialize(std::shared_ptr<Internal::RNTupleProcessorEntry> entry) = 0;
 
    /////////////////////////////////////////////////////////////////////////////
    /// \brief Check if the processor already has been initialized.
-   bool IsInitialized() const { return fProtoModel && fEntry; }
+   bool IsInitialized() const { return fEntry != nullptr; }
 
    /////////////////////////////////////////////////////////////////////////////
    /// \brief Connect fields to the page source of the processor's underlying RNTuple(s).
@@ -290,17 +291,6 @@ protected:
    virtual ROOT::NTupleSize_t LoadEntry(ROOT::NTupleSize_t entryNumber) = 0;
 
    /////////////////////////////////////////////////////////////////////////////
-   /// \brief Get the proto model used by the processor.
-   ///
-   /// A processor's proto model contains all fields that can be accessed and is inferred from the descriptors of the
-   /// underlying RNTuples. It is used in RequestField() to check that the requested field is actually valid.
-   const ROOT::RNTupleModel &GetProtoModel() const
-   {
-      assert(fProtoModel);
-      return *fProtoModel;
-   }
-
-   /////////////////////////////////////////////////////////////////////////////
    /// \brief Get the total number of entries in this processor
    virtual ROOT::NTupleSize_t GetNEntries() = 0;
 
@@ -315,6 +305,7 @@ protected:
    ///
    ///
    /// \param[in] fieldName Name of the field to add.
+   /// \param[in] typeName Type of the field to add.
    /// \param[in] valuePtr Pointer to bind to the field's value in the entry. If this is a `nullptr`, a pointer will be
    /// created.
    /// \param[in] provenance Provenance of the processor.
@@ -322,8 +313,8 @@ protected:
    /// \return The index of the newly added field in the entry.
    ///
    /// In case the field was already present in the entry, the index of the existing field is returned.
-   virtual ROOT::RResult<Internal::RNTupleProcessorEntry::FieldIndex_t>
-   AddFieldToEntry(std::string_view fieldName, void *valuePtr,
+   virtual Internal::RNTupleProcessorEntry::FieldIndex_t
+   AddFieldToEntry(const std::string &fieldName, const std::string &typeName, void *valuePtr,
                    const Internal::RNTupleProcessorProvenance &provenance) = 0;
 
    /////////////////////////////////////////////////////////////////////////////
@@ -383,6 +374,8 @@ public:
    /// \tparam T Type of the requested field.
    ///
    /// \param[in] fieldName Name of the requested field.
+   /// \param[in] valuePtr Pointer to bind to the field's value in the entry. If this is a `nullptr`, a pointer will be
+   /// created.
    ///
    /// \return An RNTupleProcessorOptionalPtr, which provides access to the field's value.
    ///
@@ -392,11 +385,14 @@ public:
    /// invalid data. After passing a pointer to `RequestField`, we *strongly* recommend only accessing its data through
    /// the interface of the returned `RNTupleProcessorOptionalPtr`, to ensure that only valid data can be read.
    template <typename T>
-   RNTupleProcessorOptionalPtr<T> RequestField(std::string_view fieldName, void *valuePtr = nullptr)
+   RNTupleProcessorOptionalPtr<T> RequestField(const std::string &fieldName, void *valuePtr = nullptr)
    {
       Initialize(fEntry);
-      // TODO handle alternative (compatible field types)
-      auto fieldIdx = AddFieldToEntry(fieldName, valuePtr, Internal::RNTupleProcessorProvenance()).Unwrap();
+      std::string typeName{};
+      if constexpr (!std::is_void_v<T>) {
+         typeName = ROOT::Internal::GetRenormalizedTypeName(typeid(T));
+      }
+      auto fieldIdx = AddFieldToEntry(fieldName, typeName, valuePtr, Internal::RNTupleProcessorProvenance());
       return RNTupleProcessorOptionalPtr<T>(fEntry.get(), fieldIdx);
    }
 
@@ -563,8 +559,18 @@ private:
    std::unique_ptr<ROOT::Internal::RPageSource> fPageSource;
 
    /////////////////////////////////////////////////////////////////////////////
-   /// \brief Initialize the processor, by setting `fProtoModel` and creating an (initially empty) `fEntry`, or setting
-   /// an existing one.
+   /// \brief Create a new field and connect it to the processor's page source.
+   ///
+   /// \param[in] qualifiedFieldName Name of the field to add, prefixed with its parent fields, if applicable.
+   /// \param[in] typeName Type of the field to add.
+   ///
+   /// \return The newly created field.
+   /// \throws ROOT::RException In case the requested field cannot be found on disk.
+   std::unique_ptr<ROOT::RFieldBase>
+   CreateAndConnectField(const std::string &qualifiedFieldName, const std::string &typeName);
+
+   /////////////////////////////////////////////////////////////////////////////
+   /// \brief Initialize the processor by creating an (initially empty) `fEntry`, or setting an existing one.
    ///
    /// At this point, the page source for the underlying RNTuple of the processor will be created and opened.
    void Initialize(std::shared_ptr<Internal::RNTupleProcessorEntry> entry = nullptr) final;
@@ -602,8 +608,8 @@ private:
    /// \brief Add a field to the entry.
    ///
    /// \sa RNTupleProcessor::AddFieldToEntry()
-   ROOT::RResult<Internal::RNTupleProcessorEntry::FieldIndex_t> AddFieldToEntry(
-      std::string_view fieldName, void *valuePtr = nullptr,
+   Internal::RNTupleProcessorEntry::FieldIndex_t AddFieldToEntry(
+      const std::string &fieldName, const std::string &typeName, void *valuePtr = nullptr,
       const Internal::RNTupleProcessorProvenance &provenance = Internal::RNTupleProcessorProvenance()) final;
 
    /////////////////////////////////////////////////////////////////////////////
@@ -633,8 +639,9 @@ public:
    RNTupleSingleProcessor &operator=(RNTupleSingleProcessor &&) = delete;
    ~RNTupleSingleProcessor() override
    {
-      // The proto model needs to be deleted before fPageSource.
-      fProtoModel.release();
+      // The entry's fields need to be deleted before fPageSource.
+      if (fEntry)
+         fEntry->Clear();
    };
 };
 
@@ -655,8 +662,7 @@ private:
    Internal::RNTupleProcessorProvenance fProvenance;
 
    /////////////////////////////////////////////////////////////////////////////
-   /// \brief Initialize the processor, by setting `fProtoModel` and creating an (initially empty) `fEntry`, or setting
-   /// an existing one.
+   /// \brief Initialize the processor by creating an (initially empty) `fEntry`, or setting an existing one.
    void Initialize(std::shared_ptr<Internal::RNTupleProcessorEntry> entry = nullptr) final;
 
    /////////////////////////////////////////////////////////////////////////////
@@ -697,8 +703,8 @@ private:
    /// \brief Add a field to the entry.
    ///
    /// \sa RNTupleProcessor::AddFieldToEntry()
-   ROOT::RResult<Internal::RNTupleProcessorEntry::FieldIndex_t> AddFieldToEntry(
-      std::string_view fieldName, void *valuePtr = nullptr,
+   Internal::RNTupleProcessorEntry::FieldIndex_t AddFieldToEntry(
+      const std::string &fieldName, const std::string &typeName, void *valuePtr = nullptr,
       const Internal::RNTupleProcessorProvenance &provenance = Internal::RNTupleProcessorProvenance()) final;
 
    /////////////////////////////////////////////////////////////////////////////
@@ -753,8 +759,7 @@ private:
 
    std::unordered_set<Internal::RNTupleProcessorEntry::FieldIndex_t> fAuxiliaryFieldIdxs;
 
-   /// \brief Initialize the processor, by setting `fProtoModel` and creating an (initially empty) `fEntry`, or setting
-   /// an existing one.
+   /// \brief Initialize the processor by creating an (initially empty) `fEntry`, or setting an existing one.
    void Initialize(std::shared_ptr<Internal::RNTupleProcessorEntry> entry = nullptr) final;
 
    /////////////////////////////////////////////////////////////////////////////
@@ -774,17 +779,6 @@ private:
    /////////////////////////////////////////////////////////////////////////////
    /// \brief Get the total number of entries in this processor.
    ROOT::NTupleSize_t GetNEntries() final;
-
-   /////////////////////////////////////////////////////////////////////////////
-   /// \brief Set the processor's proto model by combining the primary and auxiliary models.
-   ///
-   /// \param[in] primaryModel The proto model of the primary processor.
-   /// \param[in] auxModel The proto model of the auxiliary processors.
-   ///
-   /// To prevent field name clashes when one or more models have fields with duplicate names, fields from each
-   /// auxiliary model are stored as a anonymous record, and subsequently registered as subfields in the join model.
-   /// This way, they can be accessed from the processor's entry as `auxNTupleName.fieldName`.
-   void SetProtoModel(std::unique_ptr<ROOT::RNTupleModel> primaryModel, std::unique_ptr<ROOT::RNTupleModel> auxModel);
 
    /////////////////////////////////////////////////////////////////////////////
    /// \brief Set the validity for all fields in the auxiliary processor at once.
@@ -809,8 +803,8 @@ private:
    /// \brief Add a field to the entry.
    ///
    /// \sa RNTupleProcessor::AddFieldToEntry()
-   ROOT::RResult<Internal::RNTupleProcessorEntry::FieldIndex_t> AddFieldToEntry(
-      std::string_view fieldName, void *valuePtr = nullptr,
+   Internal::RNTupleProcessorEntry::FieldIndex_t AddFieldToEntry(
+      const std::string &fieldName, const std::string &typeName, void *valuePtr = nullptr,
       const Internal::RNTupleProcessorProvenance &provenance = Internal::RNTupleProcessorProvenance()) final;
 
    /////////////////////////////////////////////////////////////////////////////

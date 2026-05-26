@@ -79,12 +79,18 @@ Each instance has a local `RHistStats` object to avoid contention on the global 
 
 A single bin index, which is just an integer for normal bins.
 `Underflow()` and `Overflow()` are special values and not ordered with respect to others.
-Objects of this type are passed by value; most notably to `GetBinContent`.
+Objects of this type are passed by value; most notably to `GetBinContent` and `SetBinContent`.
 
 ### `RBinIndexRange`
 
 A range of `RBinIndex` from `begin` (inclusive) to `end` (exclusive).
 The class exposes an iterator interface that can be used in range-based loops.
+
+### `RBinIndexMultiDimRange`
+
+A multidimensional composition of `RBinIndexRange`.
+The class exposes an iterator interface that can be used in range-based loops.
+The value type is a `std::vector<RBinIndex>`.
 
 ### `RHistAutoAxisFiller`
 

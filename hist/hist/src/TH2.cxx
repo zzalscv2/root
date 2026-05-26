@@ -76,7 +76,6 @@ TH2::TH2()
    fTsumwy      = fTsumwy2 = fTsumwxy = 0;
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Constructor for fix bin size 2-D histograms.
 /// Creates the main histogram structure.
@@ -92,6 +91,7 @@ TH2::TH2()
 /// \param[in] nbinsy number of bins along the Y axis
 /// \param[in] ylow low edge of the Y axis first bin
 /// \param[in] yup upper edge of the Y axis last bin (not included in last bin)
+/// \note if xup <= xlow or yup <= ylow, automatic bins are calculated when buffer size is reached
 
 TH2::TH2(const char *name,const char *title,Int_t nbinsx,Double_t xlow,Double_t xup
                                      ,Int_t nbinsy,Double_t ylow,Double_t yup)
@@ -664,9 +664,9 @@ void TH2::FillN(Int_t ntimes, const Double_t *x, const Double_t *y, const Double
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Fill histogram following distribution in function fname.
+/// Fill histogram following distribution in function `function`.
 ///
-///  @param fname  : Function name used for filling the histogram
+///  @param function Function name used for filling the histogram
 ///  @param ntimes : number of times the histogram is filled
 ///  @param rng    : (optional) Random number generator used to sample
 ///
@@ -681,12 +681,12 @@ void TH2::FillN(Int_t ntimes, const Double_t *x, const Double_t *y, const Double
 ///
 ///  One can also call TF2::GetRandom2 to get a random variate from a function.
 
-void TH2::FillRandom(TF1 *fobj, Int_t ntimes, TRandom * rng)
+void TH2::FillRandom(TF1 *function, Int_t ntimes, TRandom * rng)
 {
    Int_t bin, binx, biny, ibin, loop;
    Double_t r1, x, y;
-   TF2 * f1 = dynamic_cast<TF2*>(fobj);
-   if (!f1) { Error("FillRandom", "Function: %s is not a TF2, is a %s",fobj->GetName(),fobj->IsA()->GetName()); return; }
+   TF2 * f1 = dynamic_cast<TF2*>(function);
+   if (!f1) { Error("FillRandom", "Function: %s is not a TF2, is a %s",function->GetName(),function->IsA()->GetName()); return; }
 
 
    TAxis & xAxis = fXaxis;
@@ -861,6 +861,7 @@ void TH2::DoFitSlices(bool onX,
       } else {
          hlist[ipar] = new TH1D(name,title, nOutBins, &bins->fArray[firstOutBin-1]);
       }
+      hlist[ipar]->SetDirectory(gDirectory);
       hlist[ipar]->GetXaxis()->SetTitle(outerAxis.GetTitle());
       if (arr)
          (*arr)[ipar] = hlist[ipar];
@@ -873,6 +874,7 @@ void TH2::DoFitSlices(bool onX,
    } else {
       hchi2 = new TH1D(name,"chisquare", nOutBins, &bins->fArray[firstOutBin-1]);
    }
+   hchi2->SetDirectory(gDirectory);
    hchi2->GetXaxis()->SetTitle(outerAxis.GetTitle());
    if (arr)
       (*arr)[npar] = hchi2;
@@ -2137,10 +2139,10 @@ TProfile *TH2::ProfileY(const char *name, Int_t firstxbin, Int_t lastxbin, Optio
    return DoProfile(false, name, firstxbin, lastxbin, option);
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Internal (protected) method for performing projection on the X or Y axis
-/// called by ProjectionX or ProjectionY
+/// called by ProjectionX or ProjectionY.
+/// The histograms created are added to gDirectory.
 
 TH1D *TH2::DoProjection(bool onX, const char *name, Int_t firstbin, Int_t lastbin, Option_t *option) const
 {
@@ -2254,6 +2256,7 @@ TH1D *TH2::DoProjection(bool onX, const char *name, Int_t firstbin, Int_t lastbi
          else
             h1 = new TH1D(pname,GetTitle(),lastOutBin-firstOutBin+1,&bins->fArray[firstOutBin-1]);
       }
+      h1->SetDirectory(gDirectory);
       if (opt.Contains("e") || GetSumw2N() ) h1->Sumw2();
    }
    if (pname != name)  delete [] pname;

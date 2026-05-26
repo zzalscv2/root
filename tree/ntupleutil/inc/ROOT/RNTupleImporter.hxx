@@ -1,5 +1,4 @@
 /// \file ROOT/RNTupleImporter.hxx
-/// \ingroup NTuple ROOT7
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2022-11-22
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -97,8 +96,8 @@ Current limitations of the importer:
   - No support for trees containing TClonesArray collections
   - Due to RNTuple currently storing data fully split, "don't split" markers are ignored
   - Some types are not available in RNTuple. Please refer to the
-    [RNTuple specification](https://github.com/root-project/root/blob/master/tree/ntuple/v7/doc/specifications.md) for
-    an overview of all types currently supported.
+    [RNTuple specification](https://github.com/root-project/root/blob/master/tree/ntuple/doc/BinaryFormatSpecification.md)
+    for an overview of all types currently supported.
 */
 // clang-format on
 class RNTupleImporter {

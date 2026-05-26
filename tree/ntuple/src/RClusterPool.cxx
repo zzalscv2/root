@@ -1,5 +1,4 @@
 /// \file RClusterPool.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2020-03-11
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -227,7 +226,7 @@ ROOT::Internal::RClusterPool::GetCluster(ROOT::DescriptorId_t clusterId, const R
 
    // Clear the cache from clusters not the in the look-ahead window or the set of pinned clusters
    for (auto itr = fPool.begin(); itr != fPool.end();) {
-      if (provide.Contains(itr->first) > 0) {
+      if (provide.Contains(itr->first)) {
          ++itr;
          continue;
       }

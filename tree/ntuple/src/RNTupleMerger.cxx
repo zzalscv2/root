@@ -1,5 +1,4 @@
 /// \file RNTupleMerger.cxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>, Max Orok <maxwellorok@gmail.com>, Alaettin Serhan Mete <amete@anl.gov>,
 /// Giacomo Parolini <giacomo.parolini@cern.ch>
 /// \date 2020-07-08
@@ -35,7 +34,6 @@
 
 #include <algorithm>
 #include <deque>
-#include <cinttypes> // for PRIu64
 #include <initializer_list>
 #include <unordered_map>
 #include <vector>
@@ -106,6 +104,16 @@ static std::optional<ENTupleMergeErrBehavior> ParseOptionErrBehavior(const TStri
                                                         {"Abort", ENTupleMergeErrBehavior::kAbort},
                                                         {"Skip", ENTupleMergeErrBehavior::kSkip},
                                                      });
+}
+
+static std::optional<ENTupleMergeVersionBehavior> ParseOptionVersionBehavior(const TString &opts)
+{
+   return ParseStringOption<ENTupleMergeVersionBehavior>(
+      opts, "rntuple.VersionBehavior=",
+      {
+         {"WarnOnHigherVersion", ENTupleMergeVersionBehavior::kWarnOnHigherVersion},
+         {"AbortOnHigherVersion", ENTupleMergeVersionBehavior::kAbortOnHigherVersion},
+      });
 }
 // -------------------------------------------------------------------------------------
 
@@ -245,6 +253,9 @@ try {
    if (auto errBehavior = ParseOptionErrBehavior(mergeInfo->fOptions)) {
       mergerOpts.fErrBehavior = *errBehavior;
    }
+   if (auto versionBehavior = ParseOptionVersionBehavior(mergeInfo->fOptions)) {
+      mergerOpts.fVersionBehavior = *versionBehavior;
+   }
    merger.Merge(sourcePtrs, mergerOpts).ThrowOnError();
 
    // Provide the caller with a merged anchor object (even though we've already
@@ -266,7 +277,7 @@ struct RChangeCompressionFunc {
 
    RPageStorage::RSealedPage &fSealedPage;
    ROOT::Internal::RPageAllocator &fPageAlloc;
-   std::uint8_t *fBuffer;
+   std::byte *fBuffer;
    std::size_t fBufSize;
    const ROOT::RNTupleWriteOptions &fWriteOpts;
 
@@ -277,15 +288,28 @@ struct RChangeCompressionFunc {
       fSealedPage.VerifyChecksumIfEnabled().ThrowOnError();
 
       const auto bytesPacked = fSrcColElement.GetPackedSize(fSealedPage.GetNElements());
+      const auto compression = fMergeOptions.fCompressionSettings.value_or(0);
       // TODO: this buffer could be kept and reused across pages
-      auto unzipBuf = MakeUninitArray<unsigned char>(bytesPacked);
+      std::unique_ptr<std::byte[]> unzipBufOwned;
+      std::byte *unzipBuf;
+      if (compression != 0) {
+         unzipBufOwned = MakeUninitArray<std::byte>(bytesPacked);
+         unzipBuf = unzipBufOwned.get();
+      } else {
+         unzipBuf = fBuffer;
+      }
       ROOT::Internal::RNTupleDecompressor::Unzip(fSealedPage.GetBuffer(), fSealedPage.GetDataSize(), bytesPacked,
-                                                 unzipBuf.get());
+                                                 unzipBuf);
 
       const auto checksumSize = fWriteOpts.GetEnablePageChecksums() * sizeof(std::uint64_t);
-      assert(fBufSize >= bytesPacked + checksumSize);
-      auto nBytesZipped = ROOT::Internal::RNTupleCompressor::Zip(unzipBuf.get(), bytesPacked,
-                                                                 fMergeOptions.fCompressionSettings.value(), fBuffer);
+      std::size_t nBytesZipped;
+      if (compression != 0) {
+         assert(fBuffer != unzipBuf);
+         assert(fBufSize >= bytesPacked + checksumSize);
+         nBytesZipped = ROOT::Internal::RNTupleCompressor::Zip(unzipBuf, bytesPacked, compression, fBuffer);
+      } else {
+         nBytesZipped = bytesPacked;
+      }
 
       fSealedPage = {fBuffer, nBytesZipped + checksumSize, fSealedPage.GetNElements(), fSealedPage.GetHasChecksum()};
       fSealedPage.ChecksumIfEnabled();
@@ -299,7 +323,7 @@ struct RResealFunc {
 
    RPageStorage::RSealedPage &fSealedPage;
    ROOT::Internal::RPageAllocator &fPageAlloc;
-   std::uint8_t *fBuffer;
+   std::byte *fBuffer;
    std::size_t fBufSize;
    const ROOT::RNTupleWriteOptions &fWriteOpts;
 
@@ -402,7 +426,7 @@ struct RSealedPageMergeData {
    // never invalidated.
    std::deque<RPageStorage::SealedPageSequence_t> fPagesV;
    std::vector<RPageStorage::RSealedPageGroup> fGroups;
-   std::vector<std::unique_ptr<std::uint8_t[]>> fBuffers;
+   std::vector<std::unique_ptr<std::byte[]>> fBuffers;
 };
 
 std::ostream &operator<<(std::ostream &os, const std::optional<ROOT::RColumnDescriptor::RValueRange> &x)
@@ -780,7 +804,7 @@ GenerateZeroPagesForColumns(size_t nEntriesToGenerate, std::span<const RColumnMe
          page.GrowUnchecked(nElementsPerPage);
          memset(page.GetBuffer(), 0, page.GetNBytes());
 
-         auto &buffer = sealedPageData.fBuffers.emplace_back(new unsigned char[bufSize]);
+         auto &buffer = sealedPageData.fBuffers.emplace_back(new std::byte[bufSize]);
          RPageSink::RSealPageConfig sealConf;
          sealConf.fElement = colElement.get();
          sealConf.fPage = &page;
@@ -906,8 +930,9 @@ RNTupleMerger::MergeCommonColumns(ROOT::Internal::RClusterPool &clusterPool,
             // NOTE: we currently allocate the max possible size for this buffer and don't shrink it afterward.
             // We might want to introduce an option that trades speed for memory usage and shrink the buffer to fit
             // the actual data size after recompressing.
-            buffer = MakeUninitArray<std::uint8_t>(bufSize);
+            buffer = MakeUninitArray<std::byte>(bufSize);
 
+            // clang-format off
             if (needsResealing) {
                RTaskVisitor{fTaskGroup}(RResealFunc{
                   *srcColElement,
@@ -931,6 +956,7 @@ RNTupleMerger::MergeCommonColumns(ROOT::Internal::RClusterPool &clusterPool,
                   mergeData.fDestination.GetWriteOptions()
                });
             }
+            // clang-format on
          }
 
          ++pageIdx;
@@ -1254,6 +1280,19 @@ ROOT::RResult<void> RNTupleMerger::Merge(std::span<RPageSource *> sources, const
       source->Attach(RNTupleSerializer::EDescriptorDeserializeMode::kForWriting);
       auto srcDescriptor = source->GetSharedDescriptorGuard();
       mergeData.fSrcDescriptor = &srcDescriptor.GetRef();
+
+      if (mergeData.fSrcDescriptor->GetVersion() > ROOT::RNTuple::GetCurrentVersion()) {
+         if (mergeOpts.fVersionBehavior == ENTupleMergeVersionBehavior::kWarnOnHigherVersion) {
+            R__LOG_WARNING(NTupleMergeLog())
+               << "RNTuple '" << mergeData.fSrcDescriptor->GetName()
+               << "' has a higher format version than the latest supported by this version "
+                  "of ROOT. Merging will work but some features may be dropped.";
+         } else {
+            return R__FAIL("RNTuple '" + mergeData.fSrcDescriptor->GetName() +
+                           "' has a higher format version than the latest supported by this version. Refusing to "
+                           "merge, since RNTupleMergeOptions::fVersionBehavior is set to AbortOnHigherVersion.");
+         }
+      }
 
       // Create sink from the input model if not initialized
       if (!fModel) {

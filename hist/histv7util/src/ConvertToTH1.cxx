@@ -31,7 +31,8 @@ std::unique_ptr<Hist> ConvertToTH1Impl(const RHistEngine<T> &engine)
    auto ret = std::make_unique<Hist>();
    ret->SetDirectory(nullptr);
 
-   ROOT::Experimental::Hist::Internal::ConvertAxis(*ret->GetXaxis(), engine.GetAxes()[0]);
+   const auto &axis = engine.GetAxes()[0];
+   ROOT::Experimental::Hist::Internal::ConvertAxis(*ret->GetXaxis(), axis);
    ret->SetBinsLength();
 
    Double_t *sumw2 = nullptr;
@@ -51,7 +52,6 @@ std::unique_ptr<Hist> ConvertToTH1Impl(const RHistEngine<T> &engine)
    };
 
    // Copy the bin contents, accounting for TH1 numbering conventions.
-   const auto &axis = engine.GetAxes()[0];
    for (auto index : axis.GetFullRange()) {
       if (index.IsUnderflow()) {
          copyBinContent(0, index);
@@ -69,14 +69,22 @@ std::unique_ptr<Hist> ConvertToTH1Impl(const RHistEngine<T> &engine)
 template <typename Hist>
 void ConvertGlobalStatistics(Hist &h, const RHistStats &stats)
 {
+   if (stats.IsTainted()) {
+      return;
+   }
+
    h.SetEntries(stats.GetNEntries());
 
    Double_t hStats[4] = {
       stats.GetSumW(),
       stats.GetSumW2(),
-      stats.GetDimensionStats(0).fSumWX,
-      stats.GetDimensionStats(0).fSumWX2,
+      0,
+      0,
    };
+   if (stats.IsEnabled(0)) {
+      hStats[2] = stats.GetDimensionStats(0).fSumWX;
+      hStats[3] = stats.GetDimensionStats(0).fSumWX2;
+   }
    h.PutStats(hStats);
 }
 } // namespace

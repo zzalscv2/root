@@ -531,7 +531,7 @@ TGraph2D::TGraph2D(const TGraph2D &g)
    (*this) = g;
 
    // append TGraph2D to gdirectory
-   if (TH1::AddDirectoryStatus()) {
+   if (ROOT::Experimental::ObjectAutoRegistrationEnabled() && TH1::AddDirectoryStatus()) {
       fDirectory = gDirectory;
       if (fDirectory) {
          // append without replacing existing objects
@@ -598,7 +598,7 @@ TGraph2D& TGraph2D::operator=(const TGraph2D &g)
 
 void TGraph2D::Build(Int_t n)
 {
-   if (n <= 0) {
+   if (n < 0) {
       Error("TGraph2D", "Invalid number of points (%d)", n);
       return;
    }
@@ -609,19 +609,25 @@ void TGraph2D::Build(Int_t n)
    fNpy       = 40;
    fDirectory = nullptr;
    fHistogram = nullptr;
-   fDelaunay = nullptr;
+   fDelaunay  = nullptr;
    fMaximum   = -1111;
    fMinimum   = -1111;
-   fX         = new Double_t[fSize];
-   fY         = new Double_t[fSize];
-   fZ         = new Double_t[fSize];
+   if (n>0) {
+      fX = new Double_t[fSize];
+      fY = new Double_t[fSize];
+      fZ = new Double_t[fSize];
+   } else {
+      fX = nullptr;
+      fY = nullptr;
+      fZ = nullptr;
+   }
    fZout      = 0;
    fMaxIter   = 100000;
    fFunctions = new TList;
    fPainter   = nullptr;
    fUserHisto = kFALSE;
 
-   if (TH1::AddDirectoryStatus()) {
+   if (ROOT::Experimental::ObjectAutoRegistrationEnabled() && TH1::AddDirectoryStatus()) {
       fDirectory = gDirectory;
       if (fDirectory) {
          fDirectory->Append(this, kTRUE);
@@ -701,18 +707,15 @@ void TGraph2D::Clear(Option_t * /*option = "" */)
    }
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
-/// Perform the automatic addition of the graph to the given directory
+/// Registration of the graph to the given directory.
 ///
-/// Note this function is called in place when the semantic requires
-/// this object to be added to a directory (I.e. when being read from
-/// a TKey or being Cloned)
+/// This callback is used to register a TGraph2D to the current directory when a TKey
+/// is read or an object is being cloned using TDirectory::CloneObject().
 
 void TGraph2D::DirectoryAutoAdd(TDirectory *dir)
 {
-   Bool_t addStatus = TH1::AddDirectoryStatus();
-   if (addStatus) {
+   if (ROOT::Experimental::ObjectAutoRegistrationEnabled() && TH1::AddDirectoryStatus()) {
       SetDirectory(dir);
       if (dir) {
          ResetBit(kCanDelete);

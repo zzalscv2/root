@@ -1,14 +1,8 @@
 import sys, pytest, os
 from pytest import mark, raises, skip
-from support import setup_make, pylong, pyunicode, IS_MAC, IS_MAC_ARM, IS_WINDOWS
+from support import setup_make, pylong, pyunicode, IS_MAC, IS_MAC_ARM, IS_WINDOWS, has_cpp_20
 
 test_dct = "datatypes_cxx"
-
-
-def has_cpp_20():
-    import cppyy
-
-    return cppyy.gbl.gInterpreter.ProcessLine("__cplusplus;") >= 202002
 
 
 def is_modules_off():
@@ -644,7 +638,7 @@ class TestDATATYPES:
 
         d = gbl.get_global_pod()
         assert gbl.is_global_pod(d)
-        assert c == d
+        assert c is d
         assert id(c) == id(d)
 
         e = gbl.CppyyTestPod()
@@ -2441,6 +2435,33 @@ class TestDATATYPES:
 
         for i in gbl.make():
             assert i.name == "NAME"
+
+    def test53_long_double_iterator(self):
+        """Test covering ROOT GitHub issue
+        https://github.com/root-project/root/issues/21732
+        """
+
+        import cppyy
+
+        std = cppyy.gbl.std
+
+        N = 5
+        A1 = std.array["int", N]
+        A2 = std.array["long double", N]
+
+        a1 = A1()
+        a2 = A2()
+
+        for i in range(len(a1)):
+            a1[i] = i
+        for i in range(len(a2)):
+            a2[i] = i
+
+        for i, v in enumerate(a1):
+            assert v == a1[i]
+
+        for i, v in enumerate(a2):
+            assert v == a2[i]
 
 if __name__ == "__main__":
     exit(pytest.main(args=['-v', '-ra', __file__]))

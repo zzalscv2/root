@@ -513,6 +513,24 @@ class TestLOWLEVEL:
         g = cppyy.gbl
         assert g.test15_templated_arrays_gmpxx.vector.value_type[g.std.vector[g.mpz_class]]
 
+    def test16_empy_llview_as_argument(self):
+        """Verify that empty LowLevelViews from nullptr can be used for C++
+        function calls. This covers the problem that was reported in
+        https://github.com/root-project/root/issues/20687.
+        """
+        import cppyy
+
+        cppyy.cppdef("""
+        int *getCStyleArray() { return nullptr; }
+        void takeCStyleArray(int *arr) {}
+        """)
+
+        ll_view = cppyy.gbl.getCStyleArray()
+
+        assert(len(ll_view) == 0)
+
+        cppyy.gbl.takeCStyleArray(ll_view)
+
 
 class TestMULTIDIMARRAYS:
     def setup_class(cls):
@@ -742,6 +760,43 @@ class TestMULTIDIMARRAYS:
         for i, v in enumerate(("s1", "s23", "s456")):
             assert len(ns.str_array[i]) == 7
             assert ns.str_array[i].as_string() == v
+
+    def test06_fixed_multidim_array_itemsize(self):
+        """conversion of fixed-length array low level views into NumPy arrays"""
+        import cppyy
+
+        try:
+            import numpy as np
+        except ImportError:
+            skip("numpy is not installed")
+
+        cases = [
+            ("float", np.float32, (3, 5)),
+            ("int", np.intc, (2, 6)),
+            ("short", np.short, (5, 3)),
+            ("unsigned char", np.ubyte, (4, 4)),
+            ("int32_t", np.int32, (2, 8)),
+            ("uint16_t", np.uint16, (7, 3)),
+        ]
+
+        for cpp_type, np_dtype, (rows, cols) in cases:
+            tag = cpp_type.replace(" ", "_")
+            cppyy.cppdef(f"""
+                struct cpp_arr_{tag} {{
+                    {cpp_type} a[{rows}][{cols}];
+                }};
+            """)
+            s = getattr(cppyy.gbl, f"cpp_arr_{tag}")()
+
+            itemsize = np.dtype(np_dtype).itemsize
+            mv = memoryview(s.a)
+            assert mv.ndim == 2
+            assert mv.shape == (rows, cols)
+            assert mv.itemsize == itemsize
+            assert mv.strides == (cols * itemsize, itemsize)
+
+            arr = np.array(s.a, dtype=np_dtype)
+            assert arr.shape == (rows, cols)
 
 
 if __name__ == "__main__":

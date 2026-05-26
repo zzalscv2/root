@@ -56,11 +56,12 @@ public:
    }
 };
 
-
-/** \class THttpServer
-\ingroup http
-
-Online http server for arbitrary ROOT application
+/**
+\class THttpServer
+\brief Online http server for arbitrary ROOT application
+\note This class provides HTTP access to ROOT objects. The user is entirely responsible for the security of the server.
+It is strongly recommended to use the server only within an isolated network
+or to enable proper authentication to prevent unauthorized remote access.
 
 Idea of THttpServer - provide remote http access to running
 ROOT application and enable HTML/JavaScript user interface.
@@ -105,6 +106,7 @@ More information: https://root.cern/root/htmldoc/guides/HttpServer/HttpServer.ht
 /// at once, separating them with semicolon (";"). Following engines are supported:
 ///
 ///     http     - TCivetweb, civetweb-based implementation of http protocol
+///     socket   - TCivetweb bound to unix socket
 ///     fastcgi  - TFastCgi, special protocol for communicating with web servers
 ///
 /// For each created engine one should provide socket port number like "http:8080" or "fastcgi:9000".
@@ -276,6 +278,31 @@ void THttpServer::SetReadOnly(Bool_t readonly)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// Returns true if server accept object content in POST reequests
+
+Bool_t THttpServer::IsAllowPostObject() const
+{
+   return fSniffer ? fSniffer->IsAllowPostObject() : kFALSE;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Set flag to allow receive and desereilize objects in POST requests
+///
+/// When object methods are executed via exe.json request,
+/// one can supply object as binary/json/xml in the body of POST request
+/// To allow creation of such object, one need to enable this flag
+/// Use of exe.json only possible in not-readonly mode
+///
+/// CAUTION! This is sensitive functionality and therefore should be
+/// used only when server not exposed to publicaly-accessed netowork.
+
+void THttpServer::SetAllowPostObject(Bool_t allow_post_obj)
+{
+   if (fSniffer)
+      fSniffer->SetAllowPostObject(allow_post_obj);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 /// returns true if only websockets are handled by the server
 ///
 /// Typically used by WebGui
@@ -321,8 +348,8 @@ void THttpServer::AddLocation(const char *prefix, const char *path)
 ///
 /// One could specify address like:
 ///
-/// * https://root.cern/js/7.6.0/
-/// * https://jsroot.gsi.de/7.6.0/
+/// * https://root.cern/js/7.11.0/
+/// * https://jsroot.gsi.de/7.11.0/
 ///
 /// This allows to get new JSROOT features with old server,
 /// reduce load on THttpServer instance, also startup time can be improved
@@ -385,6 +412,8 @@ void THttpServer::SetDrawPage(const std::string &filename)
 ///     serv->CreateEngine("http:8080");
 ///     serv->CreateEngine("civetweb:8080");
 ///     serv->CreateEngine(":8080");
+///     // creates civetweb web server bound with unix socket
+///     serv->CreateEngine("socket:/home/user/server.socket?socket_mode=0700");
 ///     // creates fastcgi server with port 9000
 ///     serv->CreateEngine("fastcgi:9000");
 ///
@@ -1300,8 +1329,10 @@ Bool_t THttpServer::ExecuteWS(std::shared_ptr<THttpCallArg> &arg, Bool_t externa
       return kTRUE;
    }
 
-   if (!handler)
+   if (!handler) {
+      arg->Set404();
       return kFALSE;
+   }
 
    Bool_t process = kFALSE;
 

@@ -2,6 +2,7 @@
 
 #include "TCurlFile.h"
 
+#include <cstdio>
 #include <memory>
 #include <utility>
 
@@ -16,4 +17,19 @@ TEST(TCurlFile, Read)
    auto f = std::make_unique<TCurlFile>("https://root.cern.ch/files/tutorials/hsimple.root");
    auto obj = f->Get("hpx");
    EXPECT_TRUE(obj != nullptr);
+}
+
+TEST(TCurlFile, Cp)
+{
+   const char *localPath = "root_test_curl_file_cp.root";
+   auto f = std::make_unique<TCurlFile>("https://root.cern.ch/files/tutorials/hsimple.root");
+   EXPECT_TRUE(f->Cp(localPath, false /* progressbar */));
+   remove(localPath);
+}
+
+TEST(TCurlFile, Raw)
+{
+   const char *localPath = "root_test_curl_file_raw";
+   EXPECT_TRUE(TFile::Cp("https://root.cern.ch/files/aleph_all.C?filetype=raw", localPath, false /* progressbar */));
+   remove(localPath);
 }

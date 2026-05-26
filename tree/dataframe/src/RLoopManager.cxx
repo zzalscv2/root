@@ -125,7 +125,14 @@ void DeclareAndRetrieveDeferredJitCalls(const std::string &codeToDeclare)
    // error: 'MyHelperType' is an incomplete type
    // return std::make_unique<Action_t>(Helper_t(std::move(*h)), bl, std::move(prevNode), colRegister);
    //                                   ^
-   gInterpreter->ProcessLine(codeToDeclare.c_str());
+   TInterpreter::EErrorCode interpErrorCode(TInterpreter::kNoError);
+   gInterpreter->ProcessLine(codeToDeclare.c_str(), &interpErrorCode);
+   if (interpErrorCode != TInterpreter::kNoError) {
+      throw std::runtime_error(
+         "\nAn error occurred during just-in-time compilation in RLoopManager::Run. The lines above might "
+         "indicate the cause of the error.\nAll RDF objects that have not run their event loop yet should be "
+         "considered in an invalid state.\n");
+   }
 
    // Step 2: Retrieve the declared functions as function pointers, cache them
    // for later use in RunDeferredCalls
@@ -139,9 +146,19 @@ void DeclareAndRetrieveDeferredJitCalls(const std::string &codeToDeclare)
          // fast fetch of the address via gInterpreter
          // (faster than gInterpreter->Evaluate(function name, ret), ret->GetAsPointer())
          // Retrieve the JIT helper function we registered via RegisterJitHelperCall
-         auto declid =
-            gInterpreter->GetFunction(clinfo, ("jitNodeRegistrator_" + std::to_string(codeAndId.second)).c_str());
-         assert(declid);
+         const std::string funcName = "jitNodeRegistrator_" + std::to_string(codeAndId.second);
+         auto declid = gInterpreter->GetFunction(clinfo, funcName.c_str());
+         if (!declid) {
+            // The interpreter failed to compile the helper. Without this check
+            // we would later dereference a null function pointer and crash.
+            gInterpreter->ClassInfo_Delete(clinfo);
+            throw std::runtime_error(
+               "\nAn error occurred during just-in-time compilation in RLoopManager::Run: failed to retrieve "
+               "the JIT helper function '" +
+               funcName +
+               "'. The lines above might indicate the cause of the error.\nAll RDF objects that have not run "
+               "their event loop yet should be considered in an invalid state.\n");
+         }
          auto minfo = gInterpreter->MethodInfo_Factory(declid);
          assert(gInterpreter->MethodInfo_IsValid(minfo));
          auto mname = gInterpreter->MethodInfo_GetMangledName(minfo);
@@ -210,6 +227,28 @@ auto MakeDatasetColReadersKey(std::string_view colName, const std::type_info &ti
    //    df.Sum<vector<int>>("stdVectorBranch");
    //    df.Sum<RVecI>("stdVectorBranch");
    return std::string(colName) + ':' + ti.name();
+}
+
+/// \brief Check if object of a certain type is in the directory
+///
+/// Attempts to read an object of the specified type via TDirectory::Get, wraps
+/// it in a std::unique_ptr to avoid leaking the object.
+template <typename T>
+bool IsObjectInDir(std::string_view objName, TDirectory &dir)
+{
+   std::unique_ptr<T> o{dir.Get<T>(objName.data())};
+   return o.get();
+}
+
+/// \brief Check if a generic object is in the directory
+///
+/// Checks if a generic object is in the directory, uses TDirectory::GetKey
+/// to avoid having to deal with memory management of the object being read
+/// without having its type.
+template <>
+bool IsObjectInDir<void>(std::string_view objName, TDirectory &dir)
+{
+   return dir.GetKey(objName.data());
 }
 } // anonymous namespace
 
@@ -391,8 +430,8 @@ void RLoopManager::ChangeSpec(ROOT::RDF::Experimental::RDatasetSpec &&spec)
    fSamples = spec.MoveOutSamples();
    fSampleMap.clear();
 
-   const bool isTTree = inFile->Get<TTree>(datasetName[0].data());
-   const bool isRNTuple = inFile->Get<ROOT::RNTuple>(datasetName[0].data());
+   const bool isTTree = IsObjectInDir<TTree>(datasetName[0], *inFile);
+   const bool isRNTuple = IsObjectInDir<ROOT::RNTuple>(datasetName[0], *inFile);
 
    if (isTTree || isRNTuple) {
 
@@ -458,8 +497,10 @@ void RLoopManager::ChangeSpec(ROOT::RDF::Experimental::RDatasetSpec &&spec)
             v.second.reset();
       }
    } else {
-      throw std::invalid_argument(
-         "RDataFrame: unsupported data format for dataset. Make sure you use TTree or RNTuple.");
+      std::string errMsg =
+         IsObjectInDir<void>(datasetName[0].data(), *inFile) ? "unsupported data format for" : "cannot find";
+      throw std::invalid_argument("RDataFrame: " + errMsg + " dataset \"" + std::string(datasetName[0]) + "\" in file \"" +
+                                  inFile->GetName() + "\".");
    }
 }
 
@@ -739,11 +780,11 @@ void RLoopManager::UpdateSampleInfo(unsigned int slot, TTreeReader &r) {
    // If the tree is stored in a subdirectory, treename will be the full path to it starting with the root directory '/'
    const std::string &id = fname + (treename.rfind('/', 0) == 0 ? "" : "/") + treename;
    if (fSampleMap.empty()) {
-      fSampleInfos[slot] = RSampleInfo(id, range);
+      fSampleInfos[slot] = RSampleInfo(id, range, nullptr, tree->GetEntries());
    } else {
       if (fSampleMap.find(id) == fSampleMap.end())
          throw std::runtime_error("Full sample identifier '" + id + "' cannot be found in the available samples.");
-      fSampleInfos[slot] = RSampleInfo(id, range, fSampleMap[id]);
+      fSampleInfos[slot] = RSampleInfo(id, range, fSampleMap[id], tree->GetEntries());
    }
 }
 
@@ -1251,14 +1292,16 @@ ROOT::Detail::RDF::CreateLMFromFile(std::string_view datasetName, std::string_vi
 
    auto inFile = OpenFileWithSanityChecks(fileNameGlob);
 
-   if (inFile->Get<TTree>(datasetName.data())) {
+   if (IsObjectInDir<TTree>(datasetName, *inFile)) {
       return CreateLMFromTTree(datasetName, fileNameGlob, defaultColumns, /*checkFile=*/false);
-   } else if (inFile->Get<ROOT::RNTuple>(datasetName.data())) {
+   } else if (IsObjectInDir<ROOT::RNTuple>(datasetName, *inFile)) {
       return CreateLMFromRNTuple(datasetName, fileNameGlob, defaultColumns);
    }
 
-   throw std::invalid_argument("RDataFrame: unsupported data format for dataset \"" + std::string(datasetName) +
-                               "\" in file \"" + inFile->GetName() + "\".");
+   std::string errMsg = IsObjectInDir<void>(datasetName, *inFile) ? "unsupported data format for" : "cannot find";
+
+   throw std::invalid_argument("RDataFrame: " + errMsg + " dataset \"" + std::string(datasetName) + "\" in file \"" +
+                               inFile->GetName() + "\".");
 }
 
 std::shared_ptr<ROOT::Detail::RDF::RLoopManager>
@@ -1271,14 +1314,16 @@ ROOT::Detail::RDF::CreateLMFromFile(std::string_view datasetName, const std::vec
 
    auto inFile = OpenFileWithSanityChecks(fileNameGlobs[0]);
 
-   if (inFile->Get<TTree>(datasetName.data())) {
+   if (IsObjectInDir<TTree>(datasetName, *inFile)) {
       return CreateLMFromTTree(datasetName, fileNameGlobs, defaultColumns, /*checkFile=*/false);
-   } else if (inFile->Get<ROOT::RNTuple>(datasetName.data())) {
+   } else if (IsObjectInDir<ROOT::RNTuple>(datasetName, *inFile)) {
       return CreateLMFromRNTuple(datasetName, fileNameGlobs, defaultColumns);
    }
 
-   throw std::invalid_argument("RDataFrame: unsupported data format for dataset \"" + std::string(datasetName) +
-                               "\" in file \"" + inFile->GetName() + "\".");
+   std::string errMsg = IsObjectInDir<void>(datasetName, *inFile) ? "unsupported data format for" : "cannot find";
+
+   throw std::invalid_argument("RDataFrame: " + errMsg + " dataset \"" + std::string(datasetName) + "\" in file \"" +
+                               inFile->GetName() + "\".");
 }
 
 // outlined to pin virtual table
@@ -1305,8 +1350,8 @@ void ROOT::Detail::RDF::RLoopManager::DataSourceThreadTask(const std::pair<ULong
    const auto nEntries = end - start;
    entryCount.fetch_add(nEntries);
 
-   RCallCleanUpTask cleanup(*this, slot);
    RDSRangeRAII _{*this, slot, start};
+   RCallCleanUpTask cleanup(*this, slot);
 
    fSampleInfos[slot] = ROOT::Internal::RDF::CreateSampleInfo(*fDataSource, slot, fSampleMap);
 
@@ -1322,7 +1367,6 @@ void ROOT::Detail::RDF::RLoopManager::DataSourceThreadTask(const std::pair<ULong
       std::cerr << "RDataFrame::Run: event loop was interrupted\n";
       throw;
    }
-   fDataSource->FinalizeSlot(slot);
 #else
    (void)entryRange;
    (void)slotStack;

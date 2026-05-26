@@ -1,5 +1,4 @@
 /// \file ROOT/RNTupleDescriptor.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \author Javier Lopez-Gomez <javier.lopez.gomez@cern.ch>
 /// \date 2018-07-19
@@ -156,6 +155,8 @@ private:
    /// For custom classes, we store the ROOT TClass reported checksum to facilitate the use of I/O rules that
    /// identify types by their checksum
    std::optional<std::uint32_t> fTypeChecksum;
+   /// Indicates if this is a collection that should be represented in memory by a SoA layout.
+   bool fIsSoACollection = false;
 
 public:
    RFieldDescriptor() = default;
@@ -189,10 +190,7 @@ public:
    std::uint32_t GetColumnCardinality() const { return fColumnCardinality; }
    std::optional<std::uint32_t> GetTypeChecksum() const { return fTypeChecksum; }
    bool IsProjectedField() const { return fProjectionSourceId != ROOT::kInvalidDescriptorId; }
-
-   bool IsCustomClass() const R__DEPRECATED(6, 42, "removed from public interface");
-   bool IsCustomEnum(const RNTupleDescriptor &desc) const R__DEPRECATED(6, 42, "removed from public interface");
-   bool IsStdAtomic() const R__DEPRECATED(6, 42, "removed from public interface");
+   bool IsSoACollection() const { return fIsSoACollection; }
 };
 
 // clang-format off
@@ -363,31 +361,31 @@ public:
    // the page belongs
    struct RPageInfo {
    private:
-      /// The sum of the elements of all the pages must match the corresponding `fNElements` field in `fColumnRanges`
-      std::uint32_t fNElements = std::uint32_t(-1);
       /// The meaning of `fLocator` depends on the storage backend.
       RNTupleLocator fLocator;
+      /// The sum of the elements of all the pages must match the corresponding `fNElements` field in `fColumnRanges`
+      std::uint32_t fNElements = std::uint32_t(-1);
       /// If true, the 8 bytes following the serialized page are an xxhash of the on-disk page data
       bool fHasChecksum = false;
 
    public:
       RPageInfo() = default;
       RPageInfo(std::uint32_t nElements, const RNTupleLocator &locator, bool hasChecksum)
-         : fNElements(nElements), fLocator(locator), fHasChecksum(hasChecksum)
+         : fLocator(locator), fNElements(nElements), fHasChecksum(hasChecksum)
       {
       }
 
       bool operator==(const RPageInfo &other) const
       {
-         return fNElements == other.fNElements && fLocator == other.fLocator;
+         return fLocator == other.fLocator && fNElements == other.fNElements;
       }
-
-      std::uint32_t GetNElements() const { return fNElements; }
-      void SetNElements(std::uint32_t n) { fNElements = n; }
 
       const RNTupleLocator &GetLocator() const { return fLocator; }
       RNTupleLocator &GetLocator() { return fLocator; }
       void SetLocator(const RNTupleLocator &locator) { fLocator = locator; }
+
+      std::uint32_t GetNElements() const { return fNElements; }
+      void SetNElements(std::uint32_t n) { fNElements = n; }
 
       bool HasChecksum() const { return fHasChecksum; }
       void SetHasChecksum(bool hasChecksum) { fHasChecksum = hasChecksum; }
@@ -445,14 +443,19 @@ public:
       std::size_t ExtendToFitColumnRange(const RColumnRange &columnRange,
                                          const ROOT::Internal::RColumnElementBase &element, std::size_t pageSize);
 
-      /// Has the same length than fPageInfos and stores the sum of the number of elements of all the pages
-      /// up to and including a given index. Used for binary search in Find().
-      std::vector<ROOT::NTupleSize_t> fCumulativeNElements;
-
-      ROOT::DescriptorId_t fPhysicalColumnId = ROOT::kInvalidDescriptorId;
       std::vector<RPageInfo> fPageInfos;
 
+      /// Has the same length than fPageInfos and stores the sum of the number of elements of all the pages
+      /// up to and including a given index. Used for binary search in Find().
+      /// This vector is only created if fPageInfos has at least kLargeRangeThreshold elements.
+      std::unique_ptr<std::vector<ROOT::NTupleSize_t>> fCumulativeNElements;
+
+      ROOT::DescriptorId_t fPhysicalColumnId = ROOT::kInvalidDescriptorId;
+
    public:
+      /// Create the fCumulativeNElements only when its needed, i.e. when there are many pages to search through.
+      static constexpr std::size_t kLargeRangeThreshold = 10;
+
       RPageRange() = default;
       RPageRange(const RPageRange &other) = delete;
       RPageRange &operator=(const RPageRange &other) = delete;
@@ -464,7 +467,9 @@ public:
          RPageRange clone;
          clone.fPhysicalColumnId = fPhysicalColumnId;
          clone.fPageInfos = fPageInfos;
-         clone.fCumulativeNElements = fCumulativeNElements;
+         if (fCumulativeNElements) {
+            clone.fCumulativeNElements = std::make_unique<std::vector<ROOT::NTupleSize_t>>(*fCumulativeNElements);
+         }
          return clone;
       }
 
@@ -538,7 +543,8 @@ public:
       using pointer = const RColumnRange *;
       using reference = const RColumnRange &;
 
-      RIterator(Iter_t iter) : fIter(iter) {}
+      RIterator() = default;
+      explicit RIterator(Iter_t iter) : fIter(iter) {}
       iterator &operator++() /* prefix */
       {
          ++fIter;
@@ -759,7 +765,18 @@ private:
    RNTupleDescriptor CloneSchema() const;
 
 public:
-   static constexpr unsigned int kFeatureFlagTest = 137; // Bit reserved for forward-compatibility testing
+   /// All known feature flags.
+   /// Note that the flag values represent the bit _index_, not the already-bitshifted integer.
+   enum EFeatureFlags {
+      // Insert new feature flags here, with contiguous values. If at any point a "hole" appears in the valid feature
+      // flags values, the check in RNTupleSerialize must be updated.
+
+      // End of regular feature flags
+      kFeatureFlag_COUNT,
+
+      /// Reserved for forward-compatibility testing
+      kFeatureFlag_Test = 137
+   };
 
    class RColumnDescriptorIterable;
    class RFieldDescriptorIterable;
@@ -814,6 +831,12 @@ public:
    std::uint64_t GetOnDiskHeaderXxHash3() const { return fOnDiskHeaderXxHash3; }
    std::uint64_t GetOnDiskHeaderSize() const { return fOnDiskHeaderSize; }
    std::uint64_t GetOnDiskFooterSize() const { return fOnDiskFooterSize; }
+   /// \see ROOT::RNTuple::GetCurrentVersion()
+   std::uint64_t GetVersion() const
+   {
+      return (static_cast<std::uint64_t>(fVersionEpoch) << 48) | (static_cast<std::uint64_t>(fVersionMajor) << 32) |
+             (static_cast<std::uint64_t>(fVersionMinor) << 16) | (static_cast<std::uint64_t>(fVersionPatch));
+   }
 
    const RFieldDescriptor &GetFieldDescriptor(ROOT::DescriptorId_t fieldId) const
    {
@@ -930,22 +953,20 @@ private:
 public:
    class RIterator final {
    private:
-      /// The enclosing range's RNTuple.
-      const RNTupleDescriptor &fNTuple;
-      /// The enclosing range's descriptor id list.
-      const std::vector<ROOT::DescriptorId_t> &fColumns;
-      std::size_t fIndex = 0;
+      /// The enclosing RColumnDescriptorIterable.
+      const RColumnDescriptorIterable *fIterable;
+      std::size_t fIndex;
 
    public:
       using iterator_category = std::forward_iterator_tag;
       using iterator = RIterator;
-      using value_type = RFieldDescriptor;
+      using value_type = RColumnDescriptor;
       using difference_type = std::ptrdiff_t;
       using pointer = const RColumnDescriptor *;
       using reference = const RColumnDescriptor &;
 
-      RIterator(const RNTupleDescriptor &ntuple, const std::vector<ROOT::DescriptorId_t> &columns, std::size_t index)
-         : fNTuple(ntuple), fColumns(columns), fIndex(index)
+      explicit RIterator(const RColumnDescriptorIterable *iterable = nullptr, std::size_t index = 0)
+         : fIterable(iterable), fIndex(index)
       {
       }
       iterator &operator++() /* prefix */
@@ -959,17 +980,26 @@ public:
          operator++();
          return old;
       }
-      reference operator*() const { return fNTuple.GetColumnDescriptor(fColumns.at(fIndex)); }
-      pointer operator->() const { return &fNTuple.GetColumnDescriptor(fColumns.at(fIndex)); }
-      bool operator!=(const iterator &rh) const { return fIndex != rh.fIndex; }
-      bool operator==(const iterator &rh) const { return fIndex == rh.fIndex; }
+      reference operator*() const
+      {
+         if (fIterable)
+            return fIterable->fNTuple.GetColumnDescriptor(fIterable->fColumns.at(fIndex));
+         throw RException(R__FAIL("dereference of RNTupleDescriptor::RColumnDescriptorIterable::RIterator"
+                                  " constructed without RNTupleDescriptor::RColumnDescriptorIterable"));
+      }
+      pointer operator->() const
+      {
+         return fIterable ? &fIterable->fNTuple.GetColumnDescriptor(fIterable->fColumns.at(fIndex)) : nullptr;
+      }
+      bool operator!=(const iterator &rh) const { return fIndex != rh.fIndex || fIterable != rh.fIterable; }
+      bool operator==(const iterator &rh) const { return fIndex == rh.fIndex && fIterable == rh.fIterable; }
    };
 
    RColumnDescriptorIterable(const RNTupleDescriptor &ntuple, const RFieldDescriptor &fieldDesc);
    RColumnDescriptorIterable(const RNTupleDescriptor &ntuple);
 
-   RIterator begin() { return RIterator(fNTuple, fColumns, 0); }
-   RIterator end() { return RIterator(fNTuple, fColumns, fColumns.size()); }
+   RIterator begin() { return RIterator(this, 0); }
+   RIterator end() { return RIterator(this, fColumns.size()); }
    size_t size() { return fColumns.size(); }
 };
 
@@ -991,11 +1021,9 @@ private:
 public:
    class RIterator final {
    private:
-      /// The enclosing range's RNTuple.
-      const RNTupleDescriptor &fNTuple;
-      /// The enclosing range's descriptor id list.
-      const std::vector<ROOT::DescriptorId_t> &fFieldChildren;
-      std::size_t fIndex = 0;
+      /// The enclosing RFieldDescriptorIterable.
+      const RFieldDescriptorIterable *fIterable;
+      std::size_t fIndex;
 
    public:
       using iterator_category = std::forward_iterator_tag;
@@ -1005,9 +1033,8 @@ public:
       using pointer = const RFieldDescriptor *;
       using reference = const RFieldDescriptor &;
 
-      RIterator(const RNTupleDescriptor &ntuple, const std::vector<ROOT::DescriptorId_t> &fieldChildren,
-                std::size_t index)
-         : fNTuple(ntuple), fFieldChildren(fieldChildren), fIndex(index)
+      explicit RIterator(const RFieldDescriptorIterable *iterable = nullptr, std::size_t index = 0)
+         : fIterable(iterable), fIndex(index)
       {
       }
       iterator &operator++() /* prefix */
@@ -1021,10 +1048,19 @@ public:
          operator++();
          return old;
       }
-      reference operator*() const { return fNTuple.GetFieldDescriptor(fFieldChildren.at(fIndex)); }
-      pointer operator->() const { return &fNTuple.GetFieldDescriptor(fFieldChildren.at(fIndex)); }
-      bool operator!=(const iterator &rh) const { return fIndex != rh.fIndex; }
-      bool operator==(const iterator &rh) const { return fIndex == rh.fIndex; }
+      reference operator*() const
+      {
+         if (fIterable)
+            return fIterable->fNTuple.GetFieldDescriptor(fIterable->fFieldChildren.at(fIndex));
+         throw RException(R__FAIL("dereference of RNTupleDescriptor::RFieldDescriptorIterable::RIterator"
+                                  " constructed without RNTupleDescriptor::RFieldDescriptorIterable"));
+      }
+      pointer operator->() const
+      {
+         return fIterable ? &fIterable->fNTuple.GetFieldDescriptor(fIterable->fFieldChildren.at(fIndex)) : nullptr;
+      }
+      bool operator!=(const iterator &rh) const { return fIndex != rh.fIndex || fIterable != rh.fIterable; }
+      bool operator==(const iterator &rh) const { return fIndex == rh.fIndex && fIterable == rh.fIterable; }
    };
    RFieldDescriptorIterable(const RNTupleDescriptor &ntuple, const RFieldDescriptor &field)
       : fNTuple(ntuple), fFieldChildren(field.GetLinkIds())
@@ -1037,8 +1073,8 @@ public:
    {
       std::sort(fFieldChildren.begin(), fFieldChildren.end(), comparator);
    }
-   RIterator begin() { return RIterator(fNTuple, fFieldChildren, 0); }
-   RIterator end() { return RIterator(fNTuple, fFieldChildren, fFieldChildren.size()); }
+   RIterator begin() { return RIterator(this, 0); }
+   RIterator end() { return RIterator(this, fFieldChildren.size()); }
 };
 
 // clang-format off
@@ -1070,7 +1106,8 @@ public:
       using pointer = const RClusterGroupDescriptor *;
       using reference = const RClusterGroupDescriptor &;
 
-      RIterator(Iter_t iter) : fIter(iter) {}
+      RIterator() = default;
+      explicit RIterator(Iter_t iter) : fIter(iter) {}
       iterator &operator++() /* prefix */
       {
          ++fIter;
@@ -1124,7 +1161,8 @@ public:
       using pointer = const RClusterDescriptor *;
       using reference = const RClusterDescriptor &;
 
-      RIterator(Iter_t iter) : fIter(iter) {}
+      RIterator() = default;
+      explicit RIterator(Iter_t iter) : fIter(iter) {}
       iterator &operator++() /* prefix */
       {
          ++fIter;
@@ -1174,7 +1212,8 @@ public:
       using pointer = const RExtraTypeInfoDescriptor *;
       using reference = const RExtraTypeInfoDescriptor &;
 
-      RIterator(Iter_t iter) : fIter(iter) {}
+      RIterator() = default;
+      explicit RIterator(Iter_t iter) : fIter(iter) {}
       iterator &operator++() /* prefix */
       {
          ++fIter;
@@ -1187,7 +1226,7 @@ public:
          return old;
       }
       reference operator*() const { return *fIter; }
-      pointer operator->() const { return &*fIter; }
+      pointer operator->() const { return fIter.operator->(); }
       bool operator!=(const iterator &rh) const { return fIter != rh.fIter; }
       bool operator==(const iterator &rh) const { return fIter == rh.fIter; }
    };
@@ -1226,7 +1265,8 @@ public:
       using pointer = const value_type *;
       using reference = const value_type &;
 
-      RIterator(Iter_t iter) : fIter(iter) {}
+      RIterator() = default;
+      explicit RIterator(Iter_t iter) : fIter(iter) {}
       iterator &operator++() /* prefix */
       {
          ++fIter;
@@ -1239,7 +1279,7 @@ public:
          return old;
       }
       reference operator*() const { return *fIter; }
-      pointer operator->() const { return &*fIter; }
+      pointer operator->() const { return fIter.operator->(); }
       bool operator!=(const iterator &rh) const { return fIter != rh.fIter; }
       bool operator==(const iterator &rh) const { return fIter == rh.fIter; }
    };
@@ -1307,10 +1347,11 @@ public:
       return fExtendedColumnRepresentations;
    }
    /// Return a vector containing the IDs of the top-level fields defined in the extension header, in the order
-   /// of their addition.
+   /// of their addition. Note that these fields are not necessarily top-level fields in the overall schema.
+   /// If a nested field is extended, it will return the top-most field of the extended subtree.
    /// We cannot create this vector when building the fFields because at the time when AddExtendedField is called,
    /// the field is not yet linked into the schema tree.
-   std::vector<ROOT::DescriptorId_t> GetTopLevelFields(const RNTupleDescriptor &desc) const;
+   std::vector<ROOT::DescriptorId_t> GetTopMostFields(const RNTupleDescriptor &desc) const;
 
    bool ContainsField(ROOT::DescriptorId_t fieldId) const
    {
@@ -1525,6 +1566,11 @@ public:
       fField.fTypeChecksum = typeChecksum;
       return *this;
    }
+   RFieldDescriptorBuilder &IsSoACollection(bool val)
+   {
+      fField.fIsSoACollection = val;
+      return *this;
+   }
    ROOT::DescriptorId_t GetParentId() const { return fField.fParentId; }
    /// Attempt to make a field descriptor. This may fail if the dangling field
    /// was not given enough information to make a proper descriptor.
@@ -1718,6 +1764,8 @@ public:
    void SetVersionForWriting();
 
    void SetNTuple(const std::string_view name, const std::string_view description);
+   /// Sets the `flag`-th bit of the feature flag to 1.
+   /// Note that `flag` itself is not a bitmask, just the bit index of the flag to enable.
    void SetFeature(unsigned int flag);
 
    void SetOnDiskHeaderXxHash3(std::uint64_t xxhash3) { fDescriptor.fOnDiskHeaderXxHash3 = xxhash3; }

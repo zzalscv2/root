@@ -26,10 +26,9 @@ Classes for describing the input data for fitting
 #include "Fit/DataRange.h"
 #include "Math/Types.h"
 
+#include <algorithm>
 #include <vector>
 #include <cassert>
-#include <iostream>
-
 
 namespace ROOT {
 

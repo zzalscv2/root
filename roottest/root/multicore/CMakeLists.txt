@@ -55,7 +55,7 @@ if(NOT MSVC AND NOT dev)
   if(xrootd)
     ROOTTEST_GENERATE_EXECUTABLE(processExecutorH1Test
                                 tProcessExecutorH1Test.cpp
-                                COMPILE_FLAGS "-I${ROOTSYS}/tutorials/legacy/multicore"
+                                COMPILE_FLAGS "-I${ROOT_TUTORIALS_DIR}/legacy/multicore"
                                 LIBRARIES ROOT::MultiProc ROOT::Core ROOT::Net ROOT::TreePlayer ROOT::Tree ROOT::RIO ROOT::Hist ROOT::Gpad ROOT::Graf
                                 FIXTURES_SETUP root-multicore-processExecutorH1Test-fixture)
 
@@ -254,7 +254,6 @@ if(NOT MSVC OR win_broken_tests)
 
   ROOTTEST_ADD_TEST(fork
                     EXEC ${CMAKE_CURRENT_BINARY_DIR}/fork
-                    COPY_TO_BUILDDIR commands1.txt commands2.txt
                     FAILREGEX "Error in" "cannot load any more object with static TLS"
                     FIXTURES_REQUIRED root-multicore-fork-fixture
                                       root-multicore-tsenumstest-fixture

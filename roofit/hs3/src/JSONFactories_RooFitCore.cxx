@@ -47,6 +47,8 @@
 #include <RooGaussModel.h>
 #include <RooWorkspace.h>
 #include <RooRealIntegral.h>
+#include <RooSpline.h>
+#include <TSpline.h>
 
 #include <TF1.h>
 #include <TH1.h>
@@ -599,6 +601,63 @@ private:
    }
 };
 
+class RooSplineFactory : public RooFit::JSONIO::Importer {
+public:
+   bool importArg(RooJSONFactoryWSTool *tool, const JSONNode &p) const override
+   {
+      const std::string name(RooJSONFactoryWSTool::name(p));
+
+      // Mandatory fields
+      if (!p.has_child("x")) {
+         RooJSONFactoryWSTool::error("no x given in '" + name + "'");
+      }
+      if (!p.has_child("x0") || !p.has_child("y0")) {
+         RooJSONFactoryWSTool::error("no x0/y0 given in '" + name + "'");
+      }
+
+      RooAbsReal *x = tool->requestArg<RooAbsReal>(p, "x");
+
+      // Optional fields (defaults follow RooSpline ctor defaults)
+      std::string algo = p.has_child("interpolation") ? p["interpolation"].val() : "poly3";
+      int order = 0;
+      if (algo == "poly3")
+         order = 3;
+      else if (algo == "poly5")
+         order = 5;
+      else {
+         RooJSONFactoryWSTool::error("unsupported algo '" + algo + "' for RooSpline in '" + name +
+                                     "': allowed are 'poly3' and 'poly5'");
+      }
+      const bool logx = p.has_child("logx") ? p["logx"].val_bool() : false;
+      const bool logy = p.has_child("logy") ? p["logy"].val_bool() : false;
+
+      // Read knots
+      std::vector<double> x0;
+      std::vector<double> y0;
+      x0.reserve(p["x0"].num_children());
+      y0.reserve(p["y0"].num_children());
+
+      for (const auto &v : p["x0"].children())
+         x0.push_back(v.val_double());
+      for (const auto &v : p["y0"].children())
+         y0.push_back(v.val_double());
+
+      if (x0.size() != y0.size()) {
+         RooJSONFactoryWSTool::error("x0/y0 size mismatch in '" + name + "': x0 has " + std::to_string(x0.size()) +
+                                     ", y0 has " + std::to_string(y0.size()));
+      }
+      if (x0.size() < 2) {
+         RooJSONFactoryWSTool::error("need at least 2 knots in '" + name + "'");
+      }
+
+      // Construct RooSpline(name,title, x, x0, y0, order, logx, logy)
+      tool->wsEmplace<::RooSpline>(name.c_str(), *x, std::span<const double>(x0.data(), x0.size()),
+                                   std::span<const double>(y0.data(), y0.size()), order, logx, logy);
+
+      return true;
+   }
+};
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // specialized exporter implementations
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -766,25 +825,30 @@ private:
       expr.ReplaceAll("TMath::Erf", "erf");
    }
 };
+// Write the "x" reference and the coefficient list for polynomial-like
+// pdfs/funcs, including the implicit defaults below "lowestOrder" so that the
+// output is self-documenting.
+template <class Pdf>
+void writePolynomialBody(const Pdf *pdf, JSONNode &elem)
+{
+   elem["x"] << pdf->x().GetName();
+   auto &coefs = elem["coefficients"].set_seq();
+   for (int i = 0; i < pdf->lowestOrder(); ++i) {
+      coefs.append_child() << (i == 0 ? "1.0" : "0.0");
+   }
+   for (const auto &coef : pdf->coefList()) {
+      coefs.append_child() << coef->GetName();
+   }
+}
+
 template <class RooArg_t>
 class RooPolynomialStreamer : public RooFit::JSONIO::Exporter {
 public:
    std::string const &key() const override;
    bool exportObject(RooJSONFactoryWSTool *, const RooAbsArg *func, JSONNode &elem) const override
    {
-      auto *pdf = static_cast<const RooArg_t *>(func);
       elem["type"] << key();
-      elem["x"] << pdf->x().GetName();
-      auto &coefs = elem["coefficients"].set_seq();
-      // Write out the default coefficient that RooFit uses for the lower
-      // orders before the order of the first coefficient. Like this, the
-      // output is more self-documenting.
-      for (int i = 0; i < pdf->lowestOrder(); ++i) {
-         coefs.append_child() << (i == 0 ? "1.0" : "0.0");
-      }
-      for (const auto &coef : pdf->coefList()) {
-         coefs.append_child() << coef->GetName();
-      }
+      writePolynomialBody(static_cast<const RooArg_t *>(func), elem);
       return true;
    }
 };
@@ -794,19 +858,8 @@ public:
    std::string const &key() const override;
    bool exportObject(RooJSONFactoryWSTool *, const RooAbsArg *func, JSONNode &elem) const override
    {
-      auto *pdf = static_cast<const RooLegacyExpPoly *>(func);
       elem["type"] << key();
-      elem["x"] << pdf->x().GetName();
-      auto &coefs = elem["coefficients"].set_seq();
-      // Write out the default coefficient that RooFit uses for the lower
-      // orders before the order of the first coefficient. Like this, the
-      // output is more self-documenting.
-      for (int i = 0; i < pdf->lowestOrder(); ++i) {
-         coefs.append_child() << (i == 0 ? "1.0" : "0.0");
-      }
-      for (const auto &coef : pdf->coefList()) {
-         coefs.append_child() << coef->GetName();
-      }
+      writePolynomialBody(static_cast<const RooLegacyExpPoly *>(func), elem);
       return true;
    }
 };
@@ -1043,21 +1096,55 @@ private:
          RooJSONFactoryWSTool::testValidName(name, false);
          JSONNode &obsNode = observablesNode.append_child().set_map();
          obsNode["name"] << name;
-         if (var->getBinning().isUniform()) {
+         auto const &binning = var->getBinning();
+         if (binning.isUniform()) {
             obsNode["min"] << var->getMin();
             obsNode["max"] << var->getMax();
             obsNode["nbins"] << var->getBins();
          } else {
-            auto &edges = obsNode["edges"];
-            edges.set_seq();
-            double val = var->getBinning().binLow(0);
-            edges.append_child() << val;
-            for (int i = 0; i < var->getBinning().numBins(); ++i) {
-               val = var->getBinning().binHigh(i);
-               edges.append_child() << val;
+            auto &edges = obsNode["edges"].set_seq();
+            edges.append_child() << binning.binLow(0);
+            for (int i = 0; i < binning.numBins(); ++i) {
+               edges.append_child() << binning.binHigh(i);
             }
          }
       }
+   }
+};
+
+class RooSplineStreamer : public RooFit::JSONIO::Exporter {
+public:
+   std::string const &key() const override;
+
+   bool exportObject(RooJSONFactoryWSTool *, const RooAbsArg *func, RooFit::Detail::JSONNode &elem) const override
+   {
+      auto const *rs = static_cast<RooSpline const *>(func);
+
+      elem["type"] << key();
+
+      // Independent variable
+      elem["x"] << rs->x().GetName();
+
+      // Spline configuration
+      // Canonical algo for RooSpline
+      elem["interpolation"] << (rs->order() == 5 ? "poly5" : "poly3");
+      elem["logx"] << rs->logx();
+      elem["logy"] << rs->logy();
+
+      // Serialize knots as primitive arrays
+      TSpline const &sp = rs->spline();
+      auto &x0 = elem["x0"].set_seq();
+      auto &y0 = elem["y0"].set_seq();
+
+      const int np = sp.GetNp();
+      for (int i = 0; i < np; ++i) {
+         double xk = 0.0, yk = 0.0;
+         sp.GetKnot(i, xk, yk);
+         x0.append_child() << xk;
+         y0.append_child() << yk;
+      }
+
+      return true;
    }
 };
 
@@ -1099,6 +1186,7 @@ DEFINE_EXPORTER_KEY(RooDerivativeStreamer, "derivative");
 DEFINE_EXPORTER_KEY(RooFFTConvPdfStreamer, "fft_conv_pdf");
 DEFINE_EXPORTER_KEY(RooExtendPdfStreamer, "extend_pdf");
 DEFINE_EXPORTER_KEY(ParamHistFuncStreamer, "step");
+DEFINE_EXPORTER_KEY(RooSplineStreamer, "spline");
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // instantiate all importers and exporters
@@ -1132,6 +1220,7 @@ STATIC_EXECUTE([]() {
    registerImporter<RooFFTConvPdfFactory>("fft_conv_pdf", false);
    registerImporter<RooExtendPdfFactory>("extend_pdf", false);
    registerImporter<ParamHistFuncFactory>("step", false);
+   registerImporter<RooSplineFactory>("spline", false);
 
    registerExporter<RooAddPdfStreamer<RooAddPdf>>(RooAddPdf::Class(), false);
    registerExporter<RooAddPdfStreamer<RooAddModel>>(RooAddModel::Class(), false);
@@ -1159,6 +1248,7 @@ STATIC_EXECUTE([]() {
    registerExporter<RooFFTConvPdfStreamer>(RooFFTConvPdf::Class(), false);
    registerExporter<RooExtendPdfStreamer>(RooExtendPdf::Class(), false);
    registerExporter<ParamHistFuncStreamer>(ParamHistFunc::Class(), false);
+   registerExporter<RooSplineStreamer>(RooSpline::Class(), false);
 });
 
 } // namespace

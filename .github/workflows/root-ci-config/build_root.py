@@ -171,7 +171,7 @@ def main():
     # "official" branches (master, v?-??-??-patches), i.e. not for pull_request
     # We also want to upload any successful build, even if it fails testing
     # later on.
-    if not pull_request and not args.incremental:
+    if not pull_request and not args.incremental and args.upload_artifacts:
         archive_and_upload(yyyy_mm_dd, obj_prefix)
 
     if args.binaries:
@@ -231,6 +231,7 @@ def parse_args():
     parser.add_argument("--repository",      default="https://github.com/root-project/root.git",
                         help="url to repository")
     parser.add_argument("--overrides",       default=None,      help="Override build options using a syntax like 'A=1 B=2'", nargs="*")
+    parser.add_argument("--upload_artifacts", default="true",   help="Whether to upload binary artifacts")
 
     args = parser.parse_args()
 
@@ -238,6 +239,7 @@ def parse_args():
     args.incremental = args.incremental.lower() in ('yes', 'true', '1', 'on')
     args.coverage = args.coverage.lower() in ('yes', 'true', '1', 'on')
     args.binaries = args.binaries.lower() in ('yes', 'true', '1', 'on')
+    args.upload_artifacts = args.upload_artifacts.lower() in ('yes', 'true', '1', 'on')
 
     if not args.base_ref:
         die(os.EX_USAGE, "base_ref not specified")
@@ -430,7 +432,7 @@ def dump_requested_config(options):
 
 @github_log_group("Build")
 def cmake_build(buildtype):
-    generator_flags = "-- '-verbosity:minimal'" if WINDOWS else ""
+    generator_flags = "-- '-verbosity:minimal' '-consoleloggerparameters:summary'" if WINDOWS else ""
     parallel_jobs = "4" if WINDOWS else str(os.cpu_count())
 
     builddir = os.path.join(WORKDIR, "build")

@@ -6,6 +6,7 @@
 #include <TRandom3.h>
 #include <TROOT.h>
 #include <TSystem.h>
+#include <TTree.h>
 #include <RZip.h>
 #include <ROOT/RError.hxx>
 #include <ROOT/RFile.hxx>
@@ -14,6 +15,8 @@
 #include <ROOT/RNTuple.hxx>
 #include <ROOT/RNTupleReader.hxx>
 #include <ROOT/RNTupleWriter.hxx>
+
+#include "RFileTestIncludes.hxx"
 
 using ROOT::Experimental::RFile;
 using ROOT::TestSupport::FileRaii;
@@ -129,9 +132,10 @@ TEST(RFile, CheckNoAutoRegistrationWrite)
    EXPECT_EQ(gDirectory, gROOT);
    auto hist = std::make_unique<TH1D>("hist", "", 100, -10, 10);
    file->Put("hist", *hist);
-   EXPECT_EQ(hist->GetDirectory(), gROOT);
+   TDirectory const *expectedDir = ROOT::Experimental::ObjectAutoRegistrationEnabled() ? gROOT : nullptr;
+   EXPECT_EQ(hist->GetDirectory(), expectedDir);
    file->Close();
-   EXPECT_EQ(hist->GetDirectory(), gROOT);
+   EXPECT_EQ(hist->GetDirectory(), expectedDir);
    hist.reset();
    // no double free should happen when ROOT exits
 }
@@ -720,4 +724,116 @@ TEST(RFile, RNTuple)
    auto reader = ROOT::RNTupleReader::Open(*ntuple);
    EXPECT_EQ(reader->GetNEntries(), 1);
    EXPECT_FLOAT_EQ(reader->GetView<float>("x")(0), 42);
+}
+
+TEST(RFile, TTreeRead)
+{
+   FileRaii fileGuard("test_rfile_ttree_read.root");
+
+   {
+      auto file = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str(), "RECREATE"));
+      auto tree = std::make_unique<TTree>("tree", "tree");
+      int x;
+      tree->Branch("x", &x);
+      for (int i = 0; i < 10; ++i) {
+         x = i;
+         tree->Fill();
+      }
+      tree->Write();
+   }
+
+   {
+      auto file = ROOT::Experimental::RFile::Open(fileGuard.GetPath());
+      auto tree = file->Get<TTree>("tree");
+      ASSERT_NE(tree, nullptr);
+      EXPECT_EQ(tree->GetEntries(), 10);
+      int x;
+      tree->SetBranchAddress("x", &x);
+      for (auto i = 0u; i < tree->GetEntries(); ++i) {
+         tree->GetEntry(i);
+         EXPECT_EQ(x, i);
+      }
+   }
+}
+
+TEST(RFile, TTreeReadAfterClose)
+{
+   FileRaii fileGuard("test_rfile_ttree_read_after_close.root");
+
+   {
+      auto file = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str(), "RECREATE"));
+      auto tree = std::make_unique<TTree>("tree", "tree");
+      int x;
+      tree->Branch("x", &x);
+      for (int i = 0; i < 10; ++i) {
+         x = i;
+         tree->Fill();
+      }
+      tree->Write();
+   }
+
+   {
+      auto file = ROOT::Experimental::RFile::Open(fileGuard.GetPath());
+      auto tree = file->Get<TTree>("tree");
+      file.reset(); // close the file
+      ASSERT_NE(tree, nullptr);
+      EXPECT_EQ(tree->GetEntries(), 10);
+      EXPECT_EQ(tree->GetEntry(0), -1); // -1 means "I/O error"
+   }
+}
+
+TEST(RFile, TTreeNoDoubleFree)
+{
+   FileRaii fileGuard("test_rfile_ttree_read_no_double_free.root");
+
+   TTreeDestructorCounter::ResetTimesDestructed();
+
+   {
+      auto file = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str(), "RECREATE"));
+      auto tree = std::make_unique<TTreeDestructorCounter>("tree", "tree");
+      int x;
+      tree->Branch("x", &x);
+      for (int i = 0; i < 10; ++i) {
+         x = i;
+         tree->Fill();
+      }
+      tree->Write();
+   }
+   EXPECT_EQ(TTreeDestructorCounter::GetTimesDestructed(), 1);
+
+   {
+      auto file = ROOT::Experimental::RFile::Open(fileGuard.GetPath());
+      auto tree = file->Get<TTreeDestructorCounter>("tree");
+      file.reset(); // close the file (does not delete the three)
+      // tree is deleted here
+   }
+
+   // destructed once during writing, once during reading.
+   EXPECT_EQ(TTreeDestructorCounter::GetTimesDestructed(), 2);
+}
+
+TEST(RFile, Compression)
+{
+   FileRaii fileGuard("test_rfile_compression.root");
+
+   {
+      auto file = RFile::Recreate(fileGuard.GetPath());
+      std::string s = "foo";
+      file->Put("foo", s);
+   }
+   {
+      auto file = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str()));
+      EXPECT_EQ(file->GetCompressionSettings(), ROOT::RCompressionSetting::EDefaults::kUseGeneralPurpose);
+   }
+   {
+      auto opts = RFile::RRecreateOptions();
+      opts.fCompressionSettings = 0;
+      auto file = RFile::Recreate(fileGuard.GetPath(), opts);
+      std::string s = "foo";
+      file->Put("foo", s);
+   }
+   {
+      auto file = std::unique_ptr<TFile>(TFile::Open(fileGuard.GetPath().c_str()));
+      EXPECT_EQ(file->GetCompressionSettings(), 0);
+   }
 }

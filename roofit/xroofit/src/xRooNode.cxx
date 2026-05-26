@@ -437,29 +437,33 @@ xRooNode::xRooNode(const char *name, const std::shared_ptr<TObject> &comp, const
                     "Inferring initial errors of %d parameters (%s%s) (give all nuisance parameters an error to avoid "
                     "this msg)",
                     int(noErrorPars.size()), (*noErrorPars.begin())->GetName(), (noErrorPars.size() > 1) ? ",..." : "");
-            // get the first top-level pdf
-            browse();
-            for (auto &a : *this) {
-               if (noErrorPars.empty()) {
-                  break;
-               }
-               if (a->fFolder == "!pdfs") {
-                  try {
-                     auto fr = a->floats().reduced(parNames).fitResult("prefit");
-                     if (auto _fr = fr.get<RooFitResult>(); _fr) {
-                        std::set<RooRealVar *> foundPars;
-                        for (auto &v : noErrorPars) {
-                           if (auto arg = dynamic_cast<RooRealVar *>(_fr->floatParsFinal().find(v->GetName()));
-                               arg && arg->hasError()) {
-                              v->setError(arg->getError());
-                              foundPars.insert(v);
+            if (gEnv->GetValue("XRooFit.SkipInitParErrorInference", false)) {
+               Warning("xRooNode", "Skipping because XRooFit.SkipInitParErrorInference=true. This is expert-only, you should fix your workspaces!");
+            } else {
+               // get the first top-level pdf
+               browse();
+               for (auto &a : *this) {
+                  if (noErrorPars.empty()) {
+                     break;
+                  }
+                  if (a->fFolder == "!pdfs") {
+                     try {
+                        auto fr = a->floats().reduced(parNames).fitResult("prefit");
+                        if (auto _fr = fr.get<RooFitResult>(); _fr) {
+                           std::set<RooRealVar *> foundPars;
+                           for (auto &v : noErrorPars) {
+                              if (auto arg = dynamic_cast<RooRealVar *>(_fr->floatParsFinal().find(v->GetName()));
+                                  arg && arg->hasError()) {
+                                 v->setError(arg->getError());
+                                 foundPars.insert(v);
+                              }
+                           }
+                           for (auto &v : foundPars) {
+                              noErrorPars.erase(v);
                            }
                         }
-                        for (auto &v : foundPars) {
-                           noErrorPars.erase(v);
-                        }
+                     } catch (...) {
                      }
-                  } catch (...) {
                   }
                }
             }
@@ -679,17 +683,11 @@ void xRooNode::Browse(TBrowser *b)
          blockBrowse = false;
       } else {
          auto _b = dynamic_cast<TGFileBrowser *>(GETACTBROWSER(dynamic_cast<TRootBrowser *>(b2->GetBrowserImp())));
-         if (_b)
+         if (_b) {
             _b->AddFSDirectory("Workspaces", nullptr, "SetRootDir");
-         /*auto l = Node2::Class()->GetMenuList();
-         auto o = new CustomClassMenuItem(TClassMenuItem::kPopupUserFunction,Node2::Class(),
-                                          "blah blah blah","BlahBlah",0,"Option_t*",-1,true);
-         //o->SetCall(o,"BlahBlah","Option_t*",-1);
-         l->AddFirst(o);*/
-         // b->BrowseObject(this);
-         _b->GotoDir(nullptr);
-         _b->Add(this, GetName());
-         // b->Add(this);
+            _b->GotoDir(nullptr);
+            _b->Add(this, GetName());
+         }
       }
       return;
    }
@@ -825,6 +823,16 @@ void xRooNode::Browse(TBrowser *b)
             formu.ReplaceAll(TString::Format("x[%zu]", i), gv->dependents()[i].GetName());
          }
          _name += formu;
+      } else if(auto pi = v->get<PiecewiseInterpolation>()) {
+         // check if all interpCodes are the same.
+         std::set<int> interpCodes;
+         for(auto& c : pi->interpolationCodes()) interpCodes.insert(c);
+         if(interpCodes.size()==1) { _name  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
+      } else if(auto fiv = v->get<RooStats::HistFactory::FlexibleInterpVar>()) {
+         // check if all interpCodes are the same.
+         std::set<int> interpCodes;
+         for(auto& c : fiv->interpolationCodes()) interpCodes.insert(c==4 ? 5 : c); // in definition of FlexibleInterpVar 4 gets replaced with 5
+         if(interpCodes.size()==1) { _name  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
       }
       // tool tip defaults to displaying name and title, so temporarily set name to obj name if has one
       // and set title to the object type
@@ -1349,6 +1357,10 @@ const char *xRooNode::GetIconName() const
 
 const char *xRooNode::GetNodeType() const
 {
+   if(auto rrs = get<RooRealSumPdf>(); rrs) {
+      // if is BinnedLikelihood show that option
+      if(rrs->getAttribute("BinnedLikelihood")) return "BinnedLikelihood";
+   }
    if (auto o = get(); o && fParent && (fParent->get<RooProduct>() || fParent->get<RooRealSumPdf>())) {
       if (o->InheritsFrom("RooStats::HistFactory::FlexibleInterpVar"))
          return "Overall";
@@ -1903,9 +1915,16 @@ xRooNode xRooNode::Add(const xRooNode &child, Option_t *opt)
          SetTitle(TString(GetTitle()) + " + " + child.GetTitle());
          return *this;
       }
+      auto _arg = child.get<RooAbsArg>();
+      if(auto _ds = dynamic_cast<RooDataSet*>(p); _arg && _ds) {
+         // can add var or function of existing obs to dataset as a column
+         _ds->addColumn(*_arg);
+         _arg->setAttribute("obs");
+         return xRooNode(*_arg,*this);
+      }
       auto _h = child.get<TH1>();
       if (!_h) {
-         throw std::runtime_error("Can only add histogram or dataset to data");
+         throw std::runtime_error("Can only add histogram or var/expr or dataset to data");
       }
       auto _pdf = parentPdf();
       if (!_pdf)
@@ -1972,6 +1991,9 @@ xRooNode xRooNode::Add(const xRooNode &child, Option_t *opt)
    }
 
    if (auto p = get<RooAddPdf>(); p) {
+      auto cc = child.fComp;
+      //bool isConverted = (cc != child.convertForAcquisition(*this, sOpt));
+      child.convertForAcquisition(*this, sOpt);
       if ((child.get<RooAbsPdf>() || (!child.fComp && getObject<RooAbsPdf>(child.GetName())))) {
          auto out = (child.fComp) ? acquire(child.fComp) : getObject<RooAbsArg>(child.GetName());
          // don't add a coef if in 'all-extended' mode and this pdf is extendable
@@ -2091,11 +2113,12 @@ xRooNode xRooNode::Add(const xRooNode &child, Option_t *opt)
             if (_obs.empty()) {
                // using X axis to construct hist
                auto _ax = dynamic_cast<Axis2 *>(GetXaxis());
-               auto t = TH1::AddDirectoryStatus();
-               TH1::AddDirectory(false);
-               auto h =
-                  std::make_unique<TH1D>(child.GetName(), child.GetTitle(), _ax->GetNbins(), _ax->binning()->array());
-               TH1::AddDirectory(t);
+               std::unique_ptr<TH1D> h;
+               {
+                  TDirectory::TContext ctx{nullptr}; // No self-registration to directories
+                  h = std::make_unique<TH1D>(child.GetName(), child.GetTitle(), _ax->GetNbins(),
+                                             _ax->binning()->array());
+               }
                h->GetXaxis()->SetName(TString::Format("%s;%s", _ax->GetParent()->GetName(), _ax->GetName()));
                // technically convertForAcquisition has already acquired so no need to re-acquire but should be harmless
                _func = std::dynamic_pointer_cast<RooAbsArg>(acquire(xRooNode(*h).convertForAcquisition(*this)));
@@ -2110,11 +2133,12 @@ xRooNode xRooNode::Add(const xRooNode &child, Option_t *opt)
                      break;
                   }
                }
-               auto t = TH1::AddDirectoryStatus();
-               TH1::AddDirectory(false);
-               auto h = std::make_unique<TH1D>(child.GetName(), child.GetTitle(), _x->numBins(binningName),
-                                               _x->getBinningPtr(binningName)->array());
-               TH1::AddDirectory(t);
+               std::unique_ptr<TH1D> h;
+               {
+                  TDirectory::TContext ctx{nullptr}; // No self-registration to directories
+                  h = std::make_unique<TH1D>(child.GetName(), child.GetTitle(), _x->numBins(binningName),
+                                             _x->getBinningPtr(binningName)->array());
+               }
                h->GetXaxis()->SetName(
                   TString::Format("%s;%s", dynamic_cast<TObject *>(_x)->GetName(), binningName.Data()));
                // technically convertForAcquisition has already acquired so no need to re-acquire but should be harmless
@@ -2141,7 +2165,7 @@ xRooNode xRooNode::Add(const xRooNode &child, Option_t *opt)
             // need to divide by bin widths first
             for (int i = 0; i < _f->dataHist().numEntries(); i++) {
                auto bin_pars = _f->dataHist().get(i);
-               _f->dataHist().set(*bin_pars, _f->dataHist().weight() / _f->dataHist().binVolume(*bin_pars));
+               _f->dataHist().set(*bin_pars, _f->dataHist().weight(i) / _f->dataHist().binVolume(*bin_pars));
             }
             _f->setAttribute("autodensity", false);
             _f->setValueDirty();
@@ -2786,6 +2810,16 @@ void xRooNode::Print(Option_t *opt) const
                   formu.ReplaceAll(TString::Format("x[%zu]", i), gv->dependents()[i].GetName());
                }
                _suffix += formu;
+            } else if(auto pi = get<PiecewiseInterpolation>()) {
+               // check if all interpCodes are the same. Will include in the NodeType
+               std::set<int> interpCodes;
+               for(auto& c : pi->interpolationCodes()) interpCodes.insert(c);
+               if(interpCodes.size()==1) { _suffix  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
+            } else if(auto fiv = get<RooStats::HistFactory::FlexibleInterpVar>()) {
+               // check if all interpCodes are the same.
+               std::set<int> interpCodes;
+               for(auto& c : fiv->interpolationCodes()) interpCodes.insert(c==4 ? 5 : c); // in definition of FlexibleInterpVar 4 gets replaced with 5
+               if(interpCodes.size()==1) { _suffix  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
             }
             std::cout << get()->ClassName() << "::" << get()->GetName() << _suffix.Data() << std::endl;
          }
@@ -2846,6 +2880,16 @@ void xRooNode::Print(Option_t *opt) const
                      formu.ReplaceAll(TString::Format("x[%zu]", j), gv->dependents()[j].GetName());
                   }
                   _suffix += formu;
+               } else if(auto pi = k->get<PiecewiseInterpolation>()) {
+                  // check if all interpCodes are the same. Will include in the NodeType
+                  std::set<int> interpCodes;
+                  for(auto& c : pi->interpolationCodes()) interpCodes.insert(c);
+                  if(interpCodes.size()==1) { _suffix  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
+               } else if(auto fiv = k->get<RooStats::HistFactory::FlexibleInterpVar>()) {
+                  // check if all interpCodes are the same.
+                  std::set<int> interpCodes;
+                  for(auto& c : fiv->interpolationCodes()) interpCodes.insert(c==4 ? 5 : c); // in definition of FlexibleInterpVar 4 gets replaced with 5
+                  if(interpCodes.size()==1) { _suffix  += TString::Format(" [InterpCode=%d]",*interpCodes.begin()); }
                }
                std::cout << k->get()->ClassName() << "::" << k->get()->GetName() << _suffix.Data() << std::endl;
             }
@@ -3334,7 +3378,7 @@ xRooNode xRooNode::Multiply(const xRooNode &child, Option_t *opt)
             // need to divide by bin widths first
             for (int i = 0; i < _f->dataHist().numEntries(); i++) {
                auto bin_pars = _f->dataHist().get(i);
-               _f->dataHist().set(*bin_pars, _f->dataHist().weight() / _f->dataHist().binVolume(*bin_pars));
+               _f->dataHist().set(*bin_pars, _f->dataHist().weight(i) / _f->dataHist().binVolume(*bin_pars));
             }
             _f->setValueDirty();
 
@@ -4190,7 +4234,7 @@ void xRooNode::_fit_(const char *constParValues, const char *options)
             : gClient->GetRoot();
       TString gofResult = "";
       if (_nll.fOpts->find("GoF")) {
-         gofResult = TString::Format("GoF p-value = %g\n", fr->constPars().getRealValue(".pgof"));
+         gofResult = TString::Format("GoF p-value = %g (mainTerm = %g)\n", fr->constPars().getRealValue(".pgof"),fr->constPars().getRealValue(".mainterm_pgof"));
       }
       if (fr->status() != 0) {
          new TGMsgBox(gClient->GetRoot(), w, "Fit Finished with Bad Status Code",
@@ -4511,16 +4555,14 @@ bool xRooNode::SetBinContent(int bin, double value, const char *par, double parV
          if (auto ax = GetXaxis(); ax) {
             std::shared_ptr<TH1D> h;
             auto _b = dynamic_cast<Axis2 *>(ax)->binning();
-            auto t = TH1::AddDirectoryStatus();
-            TH1::AddDirectory(false);
             if (_b->isUniform()) {
+               TDirectory::TContext ctx{nullptr}; // No self-registration to directories
                h.reset(new TH1D(GetName(), GetTitle(), _b->numBins(), _b->lowBound(), _b->highBound()));
             } else {
+               TDirectory::TContext ctx{nullptr}; // No self-registration to directories
                h.reset(new TH1D(GetName(), GetTitle(), _b->numBins(), _b->array()));
             }
             h->SetOption("nostyle"); // don't transfer style when added
-            h->SetDirectory(nullptr);
-            TH1::AddDirectory(t);
             h->GetXaxis()->SetName(TString::Format("%s;%s", ax->GetParent()->GetName(), ax->GetName()));
             fComp = h;
          }
@@ -4901,7 +4943,7 @@ bool xRooNode::SetBinError(int bin, double value)
          TString origName = (f->getStringAttribute("origName")) ? f->getStringAttribute("origName") : GetName();
          rrv->setStringAttribute(Form("sumw2_%s", origName.Data()), TString::Format("%f", pow(value, 2)));
          auto bin_pars = f->dataHist().get(bin - 1);
-         auto _binContent = f->dataHist().weight();
+         auto _binContent = f->dataHist().weight(bin-1);
          if (f->getAttribute("density")) {
             _binContent *= f->dataHist().binVolume(*bin_pars);
          }
@@ -5257,9 +5299,9 @@ std::shared_ptr<TObject> xRooNode::convertForAcquisition(xRooNode &acquirer, con
 
       fComp = _f;
       return _f;
-   } else if (!get() && sName.BeginsWith("factory:") && acquirer.ws()) {
+   } else if (!get() && (sName.BeginsWith("factory:")||sName.Contains("::")) && acquirer.ws()) {
       TString s(sName);
-      s = TString(s(8, s.Length()));
+      if(sName.BeginsWith("factory:")) s = TString(s(8, s.Length()));
       fComp.reset(acquirer.ws()->factory(s), [](TObject *) {});
       if (fComp) {
          const_cast<xRooNode *>(this)->TNamed::SetName(fComp->GetName());
@@ -8579,8 +8621,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
 
    TObject *vv = rar;
 
-   auto t = TH1::AddDirectoryStatus();
-   TH1::AddDirectory(false);
+
    TH1 *h = nullptr;
    if (!v) {
       if (binStart != -1 || binEnd != -1) { // allow v to stay nullptr if doing integral (binStart=binEnd=-1)
@@ -8594,6 +8635,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
          vv = dynamic_cast<TObject *>(v);
       } else {
          // make a single-bin histogram of just this value
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
          h = new TH1D(rar->GetName(), rar->GetTitle(), 1, 0, 1);
          h->GetXaxis()->SetBinLabel(1, rar->GetName());
          h->GetXaxis()->SetTimeFormat(rar->GetName());
@@ -8604,16 +8646,21 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
    bool setTitle = false;
    if (templateHist) {
       // using template hist for the binning
-      h = static_cast<TH1 *>(templateHist->Clone(rar->GetName()));
+      {
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
+         h = static_cast<TH1 *>(templateHist->Clone(rar->GetName()));
+      }
       if (h->GetListOfFunctions())
          h->GetListOfFunctions()->Clear();
-      h->SetDirectory(0);
       h->SetTitle(rar->GetTitle());
       h->Reset();
    } else if (x) {
       if (x == rar) {
          // self histogram ...
-         h = new TH1D(rar->GetName(), rar->GetTitle(), 1, 0, 1);
+         {
+            TDirectory::TContext ctx{nullptr}; // No self-registration to directories
+            h = new TH1D(rar->GetName(), rar->GetTitle(), 1, 0, 1);
+         }
          h->Sumw2();
          h->GetXaxis()->SetBinLabel(1, rar->GetName());
          h->SetBinContent(1, rar->getVal());
@@ -8639,9 +8686,11 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
          binningName = rar->GetName();
       if (x->hasBinning(binningName)) {
          if (x->getBinning(binningName).isUniform()) {
+            TDirectory::TContext ctx{nullptr}; // No self-registration to directories
             h = new TH1D(rar->GetName(), rar->GetTitle(), x->numBins(binningName) <= 0 ? 100 : x->numBins(binningName),
                          x->getMin(binningName), x->getMax(binningName));
          } else {
+            TDirectory::TContext ctx{nullptr}; // No self-registration to directories
             h = new TH1D(rar->GetName(), rar->GetTitle(), x->numBins(binningName), x->getBinning(binningName).array());
          }
          h->GetXaxis()->SetTitle(x->getBinning(binningName).GetTitle());
@@ -8656,17 +8705,23 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
             if (_bins.empty() || std::abs(_bins.back() - b) > 1e-5 * _bins.back())
                _bins.push_back(b);
          } // found sometimes get virtual duplicates in the binning
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
          h = new TH1D(rar->GetName(), rar->GetTitle(), _bins.size() - 1, &_bins[0]);
          delete _boundaries;
       } else if (!x->hasMax() || !x->hasMin()) {
          // use current value of x to estimate range with
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
          h = new TH1D(rar->GetName(), rar->GetTitle(), v->numBins(), x->getVal() * 0.2, x->getVal() * 5);
       } else {
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
          h = new TH1D(rar->GetName(), rar->GetTitle(), v->numBins(), x->getBinning().array());
       }
       h->Sumw2();
    } else if (!h) {
-      h = new TH1D(rar->GetName(), rar->GetTitle(), v->numBins(rar->GetName()), 0, v->numBins(rar->GetName()));
+      {
+         TDirectory::TContext ctx{nullptr}; // No self-registration to directories
+         h = new TH1D(rar->GetName(), rar->GetTitle(), v->numBins(rar->GetName()), 0, v->numBins(rar->GetName()));
+      }
       if (auto cat = dynamic_cast<RooAbsCategoryLValue *>(v)) {
          int i = 1;
          std::map<int, std::string> cats; // fill into a map to preserve index ordering
@@ -8682,7 +8737,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
    if (auto o = dynamic_cast<TObject *>(v); o && !setTitle) {
       h->GetXaxis()->SetTitle(o->GetTitle());
    }
-   TH1::AddDirectory(t);
+
    if (v) {
       if (h->GetXaxis()->IsAlphanumeric()) {
          // store the variable name in the TimeFormat property as well, b.c. alphanumeric requires axis name to be
@@ -8817,13 +8872,13 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
 
    for (auto o : _obs) {
       if (auto rr = o->get<RooRealVar>(); rr && rr->hasRange("coordRange")) {
-         rr->removeRange("coordRange");                 // doesn't actually remove, just sets to -inf->+inf
+         rr->removeMin();rr->removeMax();//rr->removeRange("coordRange");                 // doesn't actually remove, just sets to -inf->+inf
          rr->setStringAttribute("coordRange", nullptr); // removes the attribute
       }
    }
    // probably should also remove any range on the x-axis variable too, if there is one
    if (auto rr = dynamic_cast<RooRealVar *>(v); rr && rr->hasRange("coordRange")) {
-      rr->removeRange("coordRange");                 // doesn't actually remove, just sets to -inf->+inf
+      rr->removeMin();rr->removeMax();//rr->removeRange("coordRange");                 // doesn't actually remove, just sets to -inf->+inf
       rr->setStringAttribute("coordRange", nullptr); // removes the attribute
    }
    coords(); // loads current coordinates and populates coordRange, if any
@@ -9164,8 +9219,8 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
          double upVal, downVal;
          if (errorsLo || errorsHi) {
             std::sort(vals.begin(), vals.end());
-            upVal = vals.at(std::round(vals.size() * ROOT::Math::gaussian_cdf(1)));
-            downVal = vals.at(std::round(vals.size() * ROOT::Math::gaussian_cdf(-1)));
+            upVal = vals.at(std::floor(vals.size() * ROOT::Math::gaussian_cdf(1)));
+            downVal = vals.at(std::floor(vals.size() * ROOT::Math::gaussian_cdf(-1)));
             if (!errorsLo)
                downVal = 2. * h->GetBinContent(i) - upVal;
             if (!errorsHi)
@@ -9239,6 +9294,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
       bool titleMatchName = true;
       std::map<std::string, TH1 *> histGroups;
       std::vector<TH1 *> hhs;
+      std::set<std::pair<size_t,TH1*>> ordered_hhs;
       std::set<TH1 *> histsWithBadTitles; // these histograms will have their titles autoFormatted
 
       // support for CMS model case where has single component containing many coeffs
@@ -9248,7 +9304,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
       if (!rarNode->components().empty()) {
          auto comps = rarNode->components()[0];
          for (auto &c : *comps) {
-            if (c->fFolder == "!.coeffs")
+            if (c->fFolder == "!.coeffs" || c->fFolder == "!.coeffpars")
                cms_coefs.add(*c->get<RooAbsArg>());
          }
       }
@@ -9257,12 +9313,19 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
          std::shared_ptr<TH1> prevHist(static_cast<TH1 *>(h->Clone()));
          prevHist->Reset();
          prevHist->Add(h);
+         // Nov25: discovered cms CMSHistSum has really heavy caching, that wont clear until I clone
+         // i.e. I must first copy the function, then redirect the server, then copy that function
+         // the copy of the copy will give the correct results, not the copy
+         // This wasn't necessary for the CMSHistErrorPropagator class that I had before.
+         std::unique_ptr<RooAbsReal> forig(
+            dynamic_cast<RooAbsReal *>(rarNode->components()[0]->get()->Clone("tmpCopy0")));
          for (auto c : cms_coefs) {
             // seems I have to remake the function each time, as haven't figured out what cache needs clearing?
-            std::unique_ptr<RooAbsReal> f(
-               dynamic_cast<RooAbsReal *>(rarNode->components()[0]->get()->Clone("tmpCopy")));
+
             zero.setAttribute(Form("ORIGNAME:%s", c->GetName())); // used in redirectServers to say what this replaces
-            f->redirectServers(RooArgSet(zero), false, true);     // each time will replace one additional coef
+            forig->redirectServers(RooArgSet(zero), false, true);     // each time will replace one additional coef
+            std::unique_ptr<RooAbsReal> f(dynamic_cast<RooAbsReal *>(forig->Clone("tmpCopy")));
+
             // zero.setAttribute(Form("ORIGNAME:%s",c->GetName()),false); (commented out so that on next iteration
             // will still replace all prev)
             auto hh = xRooNode(*f, *this).BuildHistogram(v);
@@ -9271,6 +9334,11 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
                hh->Scale(sf->getVal());
             if (strlen(hh->GetTitle()) == 0) {
                hh->SetTitle(c->GetName()); // ensure all hists has titles
+               // special case for CMS ... if find "_proc_" in the title, take whatever is after that
+               auto idx = TString(hh->GetTitle()).Index("_proc_");
+               if(idx>=0) {
+                  hh->SetTitle(TString(TString(hh->GetTitle())(idx+6,strlen(hh->GetTitle()))));
+               }
                histsWithBadTitles.insert(hh);
             } else if (strcmp(hh->GetName(), hh->GetTitle()) == 0) {
                histsWithBadTitles.insert(hh);
@@ -9280,7 +9348,9 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
             std::shared_ptr<TH1> nextHist(static_cast<TH1 *>(hh->Clone()));
             hh->Add(prevHist.get(), -1.);
             hh->Scale(-1.);
-            hhs.push_back(hh);
+            // remove the errors ... the above lines will have introduced errors
+            hh->TH1::Reset("ICE"); // calling the base class method explicitly will only clear errors
+            ordered_hhs.insert(std::pair(ordered_hhs.size(),hh));
             prevHist = nextHist;
          }
       } else if (get<RooSimultaneous>()) {
@@ -9309,7 +9379,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
                titleMatchName &= (TString(samp->GetName()) == hh->GetTitle() ||
                                   TString(hh->GetTitle()).BeginsWith(TString(samp->GetName()) + "_"));
                hh->SetBinContent(hh->GetXaxis()->FindFixBin(chanName), samp->GetContent());
-               hhs.push_back(hh);
+               ordered_hhs.insert(std::pair(ordered_hhs.size(),hh));
             }
          }
       } else {
@@ -9320,7 +9390,7 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
             hh->SetName(samp->GetName());
             if (sf)
                hh->Scale(sf->getVal());
-            hhs.push_back(hh);
+            ordered_hhs.insert(std::pair((samp->get<RooAbsArg>() && samp->get<RooAbsArg>()->getStringAttribute("StackOrder")) ? TString(samp->get<RooAbsArg>()->getStringAttribute("StackOrder")).Atoi() : ordered_hhs.size(),hh));
             if (strlen(hh->GetTitle()) == 0) {
                hh->SetTitle(samp->GetName()); // ensure all hists has titles
                histsWithBadTitles.insert(hh);
@@ -9330,6 +9400,11 @@ TH1 *xRooNode::BuildHistogram(RooAbsLValue *v, bool empty, bool errors, int binS
             titleMatchName &= (TString(samp->GetName()) == hh->GetTitle() ||
                                TString(hh->GetTitle()).BeginsWith(TString(samp->GetName()) + "_"));
          }
+      }
+
+      // pull histograms in their order
+      for(auto& [_,hh] : ordered_hhs) {
+         hhs.push_back(hh);
       }
 
       if (!hhs.empty()) {
@@ -10842,14 +10917,7 @@ void xRooNode::Draw(Option_t *opt)
       histCopy->SetBit(kCanDelete);
       auto _axis = (doHorizontal ? histCopy->GetYaxis() : histCopy->GetXaxis());
 
-      /*
-            auto t = TH1::AddDirectoryStatus();
-            TH1::AddDirectory(false);
-            auto hist = new TH1F(TString::Format(".%s_pullFrame", GetName()), fr->GetTitle(), std::max(graph->GetN(),
-         1), -0.5, std::max(graph->GetN(), 1) - 0.5); hist->SetStats(false); TH1::AddDirectory(t);
-            hist->SetBit(kCanDelete);
-            */
-      //      auto hist = graph->GetHistogram();
+
       graph->GetHistogram()->GetXaxis()->Set(std::max(graph->GetN(), 1), -0.5, std::max(graph->GetN(), 1) - 0.5);
       for (int ii = 1; ii <= _axis->GetNbins(); ii++) {
          graph->GetHistogram()->GetXaxis()->SetBinLabel(ii, _axis->GetBinLabel(ii));
@@ -11581,6 +11649,10 @@ void xRooNode::Draw(Option_t *opt)
    if (!hasSame)
       clearPad();
 
+   if(rar->getAttribute("Logy")) {
+      gPad->SetLogy(1);
+   }
+
    if (rar == vv && rar->IsA() == RooRealVar::Class()) {
       // add a TExec to the histogram so that when edited it will propagate to var
       // h->GetListOfFunctions()->Add(h->Clone("self"),"TEXTHIST");
@@ -12219,7 +12291,11 @@ void xRooNode::SaveAs(const char *filename, Option_t *option) const
       }
 #endif
       // const_cast<Node2*>(this)->sterilize(); - tried this to reduce mem leak on readback but no improve
+#if ROOT_VERSION_CODE < ROOT_VERSION(6, 38, 00)
       if (!w->writeToFile(sFilename, sOpt != "update")) {
+#else
+      if (w->writeToFile(sFilename, sOpt != "update")) {
+#endif
          Info("SaveAs", "%s saved to %s", w->GetName(), sFilename.Data());
          // save any fitDatabase that is loaded in memory too
          // TODO: We should do this as well for SaveAs on a scan object

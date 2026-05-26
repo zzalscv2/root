@@ -23,6 +23,7 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTTMVASofie
    TMVA/RModel_Base.hxx
    TMVA/RModel.hxx
    TMVA/ROperator.hxx
+   TMVA/ROperator_Basic_Is.hxx
    TMVA/ROperator_BasicUnary.hxx
    TMVA/ROperator_BasicBinary.hxx
    TMVA/ROperator_BasicNary.hxx
@@ -64,6 +65,13 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTTMVASofie
    TMVA/ROperator_Einsum.hxx
    TMVA/ROperator_Random.hxx
    TMVA/ROperator_ScatterElements.hxx
+   TMVA/ROperator_ScatterND.hxx
+   TMVA/ROperator_Gather.hxx
+   TMVA/ROperator_GatherND.hxx
+   TMVA/ROperator_NonZero.hxx
+   TMVA/ROperator_Not.hxx
+   TMVA/ROperator_Clip.hxx
+   TMVA/ROperator_Gelu.hxx
    TMVA/SOFIE_common.hxx
    TMVA/SOFIEHelpers.hxx
 

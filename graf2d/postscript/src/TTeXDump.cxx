@@ -83,18 +83,7 @@ corresponding pdf file `simple.pdf`.
 
 TTeXDump::TTeXDump() : TVirtualPS()
 {
-   fStream       = nullptr;
-   fType         = 0;
    gVirtualPS    = this;
-   fBoundingBox  = kFALSE;
-   fRange        = kFALSE;
-   fXsize        = 0.;
-   fYsize        = 0.;
-   fCurrentRed   = -1.;
-   fCurrentGreen = -1.;
-   fCurrentBlue  = -1.;
-   fCurrentAlpha = 1.;
-   fLineScale    = 0.;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -108,18 +97,7 @@ TTeXDump::TTeXDump() : TVirtualPS()
 
 TTeXDump::TTeXDump(const char *fname, Int_t wtype) : TVirtualPS(fname, wtype)
 {
-   fStream       = nullptr;
-   fType         = 0;
    gVirtualPS    = this;
-   fBoundingBox  = kFALSE;
-   fRange        = kFALSE;
-   fXsize        = 0.;
-   fYsize        = 0.;
-   fCurrentRed   = -1.;
-   fCurrentGreen = -1.;
-   fCurrentBlue  = -1.;
-   fCurrentAlpha = 1.;
-   fLineScale    = 0.;
 
    Open(fname, wtype);
 }
@@ -154,15 +132,14 @@ void TTeXDump::Open(const char *fname, Int_t wtype)
    }
 
    // Open OS file
-   fStream   = new std::ofstream(fname,std::ios::out);
-   if (!fStream || !fStream->good()) {
-      printf("ERROR in TTeXDump::Open: Cannot open file:%s\n",fname);
-      if (!fStream) return;
+   if (!OpenStream(fname)) {
+      Error("Open", "Cannot open file:%s", fname);
+      return;
    }
 
    gVirtualPS = this;
 
-   for (Int_t i=0;i<fSizBuffer;i++) fBuffer[i] = ' ';
+   ClearBuffer();
 
    fBoundingBox = kFALSE;
    fRange       = kFALSE;
@@ -171,7 +148,8 @@ void TTeXDump::Open(const char *fname, Int_t wtype)
    // Set a default range
    Range(fXsize, fYsize);
 
-   if (strstr(GetTitle(),"Standalone")) fStandalone = kTRUE;
+   if (strstr(GetTitle(),"Standalone"))
+      fStandalone = kTRUE;
    if (fStandalone) {
       PrintStr("\\documentclass{standalone}@");
       PrintStr("\\usepackage{tikz}@");
@@ -200,9 +178,10 @@ TTeXDump::~TTeXDump()
 
 void TTeXDump::Close(Option_t *)
 {
-   if (!gVirtualPS) return;
-   if (!fStream) return;
-   if (gPad) gPad->Update();
+   if (!gVirtualPS || !fStream)
+      return;
+   if (gPad)
+      gPad->Update();
    PrintStr("@");
    PrintStr("\\end{tikzpicture}@");
    if (fStandalone) {
@@ -212,7 +191,7 @@ void TTeXDump::Close(Option_t *)
    }
 
    // Close file stream
-   if (fStream) { fStream->close(); delete fStream; fStream = nullptr;}
+   CloseStream();
 
    gVirtualPS = nullptr;
 }
@@ -790,8 +769,8 @@ void TTeXDump::SetTextColor( Color_t cindex )
 
 void TTeXDump::Text(Double_t x, Double_t y, const char *chars)
 {
-   Double_t wh = (Double_t)gPad->XtoPixel(gPad->GetX2());
-   Double_t hh = (Double_t)gPad->YtoPixel(gPad->GetY1());
+   Double_t wh = (Double_t)gPad->GetPadWidth();
+   Double_t hh = (Double_t)gPad->GetPadHeight();
    Float_t tsize, ftsize;
    if (wh < hh) {
       tsize = fTextSize*wh;
@@ -849,6 +828,15 @@ void TTeXDump::Text(Double_t x, Double_t y, const char *chars)
    PrintFast(2,"]{");
    PrintStr(t.Data());
    PrintFast(2,"};");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Draw text with URL. Same as Text.
+///
+
+void TTeXDump::TextUrl(Double_t x, Double_t y, const char *chars, const char *)
+{
+   Text(x, y, chars);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

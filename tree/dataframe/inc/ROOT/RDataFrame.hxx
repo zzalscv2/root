@@ -9,8 +9,14 @@
  *************************************************************************/
 
 /**
-  \defgroup dataframe Dataframe
-ROOT's RDataFrame allows to analyse data stored in TTrees with a high level interface.
+  \defgroup dataframe RDataFrame
+This is an overview of classes that are part of the RDataFrame package.
+\note The main entry point for the RDataFrame API is \ref ROOT::RDataFrame.
+
+ROOT::RDataFrame allows to analyse data with a high-level interface.
+It reads TTree, RNTuple, and various other inputs (see \ref ROOT::RDF::RDataSource and
+its derived classes), and supports filtering events, computing new quantities, and producing
+output such as histograms and new datasets.
 */
 
 #ifndef ROOT_RDATAFRAME

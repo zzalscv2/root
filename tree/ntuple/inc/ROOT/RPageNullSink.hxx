@@ -1,5 +1,4 @@
 /// \file ROOT/RPageNullSink.hxx
-/// \ingroup NTuple
 /// \author Jonas Hahnfeld <jonas.hahnfeld@cern.ch>
 /// \date 2024-01-31
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -105,7 +104,13 @@ public:
    }
    void CommitStagedClusters(std::span<RStagedCluster>) final {}
    void CommitClusterGroup() final {}
-   void CommitDatasetImpl() final {}
+   ROOT::Internal::RNTupleLink CommitDatasetImpl() final { return {}; }
+   void CommitAttributeSet(std::string_view, const ROOT::Internal::RNTupleLink &) final {}
+
+   std::unique_ptr<RPageSink> CloneAsHidden(std::string_view, const RNTupleWriteOptions &) const final
+   {
+      throw ROOT::RException(R__FAIL("cannot clone null sink"));
+   }
 };
 
 } // namespace Internal

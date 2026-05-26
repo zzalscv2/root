@@ -1,15 +1,10 @@
 import os, sys, pytest
 from pytest import mark, raises, skip
-from support import setup_make, ispypy, IS_WINDOWS, IS_MAC_ARM
+from support import setup_make, ispypy, IS_WINDOWS, IS_MAC_ARM, has_cpp_20
 
 
 test_dct = "fragile_cxx"
 
-
-def has_cpp_20():
-    import cppyy
-
-    return cppyy.gbl.gInterpreter.ProcessLine("__cplusplus;") >= 202002
 
 def has_asserts():
     import cppyy
@@ -549,13 +544,12 @@ class TestFRAGILE:
         assert "invaliddigit" in err
         assert "1aap=42;" in err
 
-    @mark.xfail(strict=True, condition=not IS_WINDOWS, reason="Fails on Windows")
     def test22_cppexec(self):
         """Interactive access to the Cling global scope"""
 
         import cppyy
 
-        cppyy.cppexec("int interactive_b = 4")
+        cppyy.cppdef("int interactive_b = 4;")
         assert cppyy.gbl.interactive_b == 4
 
         with raises(SyntaxError):
@@ -604,16 +598,18 @@ class TestFRAGILE:
                 int add42(int i) { return i + 42; }
             }""")
 
-        with warnings.catch_warnings(record=True) as w:
-          # missing return statement
-            cppyy.cppdef("""\
-            namespace fragile {
-                double add42d(double d) { d + 42.; return d; }
-            }""")
+      # isolate the warning configuration
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # turn warnings into errors
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, SyntaxWarning)
-        assert "return" in str(w[-1].message)
+          # missing return statement
+            with pytest.raises(SyntaxWarning) as exc:
+                cppyy.cppdef("""\
+                namespace fragile {
+                    double add42d(double d) { d + 42.; return d; }
+                }""")
+
+            assert "return" in str(exc.value)
 
       # mix of error and warning
         with raises(SyntaxError):

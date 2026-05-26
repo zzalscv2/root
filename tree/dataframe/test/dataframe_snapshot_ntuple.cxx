@@ -170,6 +170,26 @@ TEST(RDFSnapshotRNTuple, WriteOpts)
    }
 }
 
+TEST(RDFSnapshotRNTuple, DefaultCompressionSettings)
+{
+   FileRAII fileGuard{"RDFSnapshotRNTuple_default_compression_settings.root"};
+   const std::vector<std::string> columns = {"x"};
+
+   auto df = ROOT::RDataFrame(25ull).Define("x", [] { return 10; });
+
+   RSnapshotOptions opts;
+   opts.fOutputFormat = ROOT::RDF::ESnapshotOutputFormat::kRNTuple;
+
+   auto sdf = df.Snapshot("ntuple", fileGuard.GetPath(), {"x"}, opts);
+
+   EXPECT_EQ(columns, sdf->GetColumnNames());
+
+   auto reader = RNTupleReader::Open("ntuple", fileGuard.GetPath());
+   auto compSettings = *reader->GetDescriptor().GetClusterDescriptor(0).GetColumnRange(0).GetCompressionSettings();
+   // The RNTuple default should be 505
+   EXPECT_EQ(505, compSettings);
+}
+
 TEST(RDFSnapshotRNTuple, Compression)
 {
    FileRAII fileGuard{"RDFSnapshotRNTuple_compression.root"};
@@ -501,9 +521,9 @@ TEST(RDFSnapshotRNTuple, UpdateSameName)
       FAIL() << "snapshotting in \"UPDATE\" mode to the same ntuple name without `fOverwriteIfExists` is not allowed ";
    } catch (const std::invalid_argument &err) {
       EXPECT_STREQ(err.what(),
-                   "Snapshot: RNTuple \"ntuple\" already present in file "
+                   "Snapshot: object \"ntuple\" already present in file "
                    "\"RDFSnapshotRNTuple_update_same_name.root\". If you want to delete the original "
-                   "ntuple and write another, please set the 'fOverwriteIfExists' option to true in RSnapshotOptions.");
+                   "object and write another, please set the 'fOverwriteIfExists' option to true in RSnapshotOptions.");
    }
 
    opts.fOverwriteIfExists = true;
@@ -563,10 +583,7 @@ TEST(RDFSnapshotRNTuple, CardinalityColumns)
    opts.fMode = "UPDATE";
    opts.fOutputFormat = ROOT::RDF::ESnapshotOutputFormat::kRNTuple;
    ROOT::RDataFrame df("ntuple", fileGuard.GetPath());
-
-   ROOT_EXPECT_WARNING(df.Snapshot("ntuple_snap", fileGuard.GetPath(), "", opts), "Snapshot",
-                       "Column \"nElectrons\" is a read-only \"ROOT::RNTupleCardinality<std::uint32_t>\" column. It "
-                       "will be snapshot as its inner type \"std::uint32_t\" instead.");
+   df.Snapshot("ntuple_snap", fileGuard.GetPath(), "", opts);
 
    ROOT::RDataFrame sdf("ntuple_snap", fileGuard.GetPath());
    EXPECT_EQ("std::uint32_t", sdf.GetColumnType("nElectrons"));
@@ -667,7 +684,8 @@ protected:
 
       auto &descriptor = reader->GetDescriptor();
 
-      int nTopLevelFields = std::distance(descriptor.GetTopLevelFields().begin(), descriptor.GetTopLevelFields().end());
+      auto topLevelFieldsIterable = descriptor.GetTopLevelFields();
+      int nTopLevelFields = std::distance(topLevelFieldsIterable.begin(), topLevelFieldsIterable.end());
       EXPECT_EQ(9, nTopLevelFields);
       EXPECT_EQ("std::int32_t", descriptor.GetFieldDescriptor(descriptor.FindFieldId("x")).GetTypeName());
       EXPECT_EQ("float", descriptor.GetFieldDescriptor(descriptor.FindFieldId("pt")).GetTypeName());

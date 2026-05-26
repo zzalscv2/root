@@ -8,6 +8,7 @@
 #include "wildcards.hpp"
 
 #include <TFile.h>
+#include <TSystem.h>
 
 #include <ROOT/StringUtils.hxx>
 
@@ -27,10 +28,19 @@ ROOT::CmdLine::GetMatchingPathsInFile(std::string_view fileName, std::string_vie
    ROOT::CmdLine::RootSource source;
    source.fFileName = fileName;
    auto &nodeTree = source.fObjectTree;
-   nodeTree.fFile =
-      std::unique_ptr<TFile>(TFile::Open(std::string(fileName).c_str(), "READ_WITHOUT_GLOBALREGISTRATION"));
+   const char *fileMode = "READ_WITHOUT_GLOBALREGISTRATION";
+   const std::string fileNameStr { fileName };
+   if (flags & kOpenFilesAsWritable) {
+      // There is no way to open a file for writing only if the file already exists, so we need to manually check first.
+      if (gSystem->AccessPathName(fileNameStr.c_str(), kWritePermission)) {
+         source.fErrors.push_back("File '" + fileNameStr + "' does not exist or is not writable.");
+         return source;
+      }
+      fileMode = "UPDATE_WITHOUT_GLOBALREGISTRATION";
+   }
+   nodeTree.fFile = std::unique_ptr<TFile>(TFile::Open(fileNameStr.c_str(), fileMode));
    if (!nodeTree.fFile || nodeTree.fFile->IsZombie()) {
-      source.fErrors.push_back("Failed to open file");
+      source.fErrors.push_back("Failed to open file '" + fileNameStr + "'");
       return source;
    }
 
@@ -77,7 +87,11 @@ ROOT::CmdLine::GetMatchingPathsInFile(std::string_view fileName, std::string_vie
          // where pattern filtering applies.
          // In all other cases, we check if the key name matches the pattern and skip it if it doesn't.
          if (cur->fNesting < patternSplits.size()) {
-            if (MatchesGlob(key->GetName(), patternSplits[cur->fNesting]))
+            const auto &patternSplit = patternSplits[cur->fNesting];
+            const bool hasCycle = patternSplit.rfind(';') != std::string_view::npos;
+            const auto nameCycle =
+               std::string(key->GetName()) + (hasCycle ? ';' + std::to_string(key->GetCycle()) : "");
+            if (MatchesGlob(nameCycle, patternSplits[cur->fNesting]))
                patternWasMatchedAtLeastOnce[cur->fNesting] = true;
             else
                continue;

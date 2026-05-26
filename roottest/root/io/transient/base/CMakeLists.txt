@@ -10,9 +10,11 @@ add_test(NAME roottest-root-io-transient-base-build
                                   --target base${fast}
                                   -- ${always-make})
 set_property(TEST roottest-root-io-transient-base-build PROPERTY FIXTURES_SETUP root-io-transient-base-build)
-if(CMAKE_GENERATOR MATCHES Ninja)
-   set_property(TEST roottest-root-io-transient-base-build APPEND PROPERTY RESOURCE_LOCK NINJA_BUILD)
-   set_property(TEST roottest-root-io-transient-base-build APPEND PROPERTY FIXTURES_REQUIRED NINJA_BUILD_ALL)
+if(GeneratorNeedsBuildSerialization)
+  if(GeneratorNeedsResourecLock)
+    set_property(TEST roottest-root-io-transient-base-build APPEND PROPERTY RESOURCE_LOCK CMAKE_BUILD)
+  endif()
+  set_property(TEST roottest-root-io-transient-base-build APPEND PROPERTY FIXTURES_REQUIRED CMAKE_BUILD_ALL)
 endif()
 
 ROOTTEST_ADD_TEST(WriteFile
@@ -23,12 +25,6 @@ ROOTTEST_ADD_TEST(WriteFile
                   TIMEOUT 600
                   FIXTURES_REQUIRED root-io-transient-base-build
                   FIXTURES_SETUP root-io-transient-base-WriteFile-fixture)
-
-if(${compression_default} STREQUAL "lz4")
-  set(outref_suffix "LZ4")
-else()
-  set(outref_suffix "ZLIB")
-endif()
 
 set(root_includepaths
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -42,6 +38,6 @@ string(REPLACE ";" "$<SEMICOLON>" root_includepaths_escaped "${root_includepaths
 
 ROOTTEST_ADD_TEST(hadd_autoload
                   COMMAND hadd -f data_merge.root data1.root data2.root
-                  OUTREF hadd_autoload${outref_suffix}.ref
+                  OUTREF hadd_autoload.ref
                   FIXTURES_REQUIRED root-io-transient-base-WriteFile-fixture
                   ENVIRONMENT ROOT_INCLUDE_PATH=${root_includepaths_escaped})

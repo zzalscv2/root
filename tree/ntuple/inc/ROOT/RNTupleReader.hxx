@@ -1,5 +1,4 @@
 /// \file ROOT/RNTupleReader.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2024-02-20
 
@@ -527,6 +526,12 @@ public:
    /// ~~~
    void EnableMetrics() { fMetrics.Enable(); }
    const Experimental::Detail::RNTupleMetrics &GetMetrics() const { return fMetrics; }
+
+   /// Looks for an attribute set with the given name and creates an RNTupleAttrSetReader for it, with the provided
+   /// read options.
+   /// The returned reader has an independent lifetime from this RNTupleReader.
+   std::unique_ptr<Experimental::RNTupleAttrSetReader>
+   OpenAttributeSet(std::string_view attrSetName, const ROOT::RNTupleReadOptions &options = {});
 }; // class RNTupleReader
 
 } // namespace ROOT

@@ -1,5 +1,4 @@
 /// \file ROOT/RPageStorageDaos.hxx
-/// \ingroup NTuple
 /// \author Javier Lopez-Gomez <j.lopez@cern.ch>
 /// \date 2020-11-03
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -42,10 +41,6 @@ using ntuple_index_t = std::uint32_t;
 class RDaosPool;
 class RDaosContainer;
 class RPageAllocatorHeap;
-enum EDaosLocatorFlags {
-   // Indicates that the referenced page is "caged", i.e. it is stored in a larger blob that contains multiple pages.
-   kCagedPage = 0x01,
-};
 
 // clang-format off
 /**
@@ -119,7 +114,6 @@ private:
 
    RDaosNTupleAnchor fNTupleAnchor;
    ntuple_index_t fNTupleIndex{0};
-   uint32_t fCageSizeLimit{};
 
 protected:
    using RPagePersistentSink::InitImpl;
@@ -132,7 +126,7 @@ protected:
    std::uint64_t StageClusterImpl() final;
    RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList, std::uint32_t length) final;
    using RPagePersistentSink::CommitDatasetImpl;
-   void CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) final;
+   ROOT::Internal::RNTupleLink CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) final;
    void WriteNTupleHeader(const void *data, size_t nbytes, size_t lenHeader);
    void WriteNTupleFooter(const void *data, size_t nbytes, size_t lenFooter);
    void WriteNTupleAnchor();
@@ -140,6 +134,9 @@ protected:
 public:
    RPageSinkDaos(std::string_view ntupleName, std::string_view uri, const ROOT::RNTupleWriteOptions &options);
    ~RPageSinkDaos() override;
+
+   std::unique_ptr<ROOT::Internal::RPageSink>
+   CloneAsHidden(std::string_view name, const ROOT::RNTupleWriteOptions &opts) const final;
 }; // class RPageSinkDaos
 
 // clang-format off
@@ -185,6 +182,9 @@ public:
    std::string GetObjectClass() const;
 
    void LoadStreamerInfo() final;
+
+   std::unique_ptr<RPageSource> OpenWithDifferentAnchor(const ROOT::Internal::RNTupleLink &anchorLink,
+                                                        const ROOT::RNTupleReadOptions &options = {}) final;
 }; // class RPageSourceDaos
 
 } // namespace Internal

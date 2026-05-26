@@ -51,7 +51,7 @@ class TVirtualPad : public TObject, public TAttLine, public TAttFill,
                     public TAttPad, public TQObject {
 
 protected:
-   Bool_t         fResizing;         //!true when resizing the pad
+   Bool_t         fResizing;         ///<!true when resizing the pad
 
    void  *GetSender() override { return this; }  //used to set gTQSender
 
@@ -118,6 +118,8 @@ public:
    virtual Double_t GetHNDC() const = 0;
    virtual UInt_t   GetWw() const = 0;
    virtual UInt_t   GetWh() const = 0;
+   virtual UInt_t   GetPadWidth() const = 0;
+   virtual UInt_t   GetPadHeight() const = 0;
    virtual Double_t GetAbsXlowNDC() const = 0;
    virtual Double_t GetAbsYlowNDC() const = 0;
    virtual Double_t GetAbsWNDC() const = 0;
@@ -189,12 +191,15 @@ public:
    virtual void     PaintPolyLineNDC(Int_t n, Double_t *x, Double_t *y, Option_t *option="") = 0;
    virtual void     PaintPolyMarker(Int_t n, Float_t *x, Float_t *y, Option_t *option="") = 0;
    virtual void     PaintPolyMarker(Int_t n, Double_t *x, Double_t *y, Option_t *option="") = 0;
+   virtual void     PaintSegments(Int_t n, Double_t *x, Double_t *y, Option_t *option="");
+   virtual void     PaintSegmentsNDC(Int_t n, Double_t *u, Double_t *v);
    virtual void     PaintMarker3D(Double_t x, Double_t y, Double_t z) = 0;
    virtual void     PaintModified() = 0;
    virtual void     PaintText(Double_t x, Double_t y, const char *text) = 0;
    virtual void     PaintText(Double_t x, Double_t y, const wchar_t *text) = 0;
    virtual void     PaintTextNDC(Double_t u, Double_t v, const char *text) = 0;
    virtual void     PaintTextNDC(Double_t u, Double_t v, const wchar_t *text) = 0;
+   virtual void     PaintTextUrl(Double_t x, Double_t y, const char *text, const char *url) = 0;
    virtual Double_t PixeltoX(Double_t px) = 0;
    virtual Double_t PixeltoY(Double_t py) = 0;
    virtual void     PixeltoXY(Double_t xpixel, Double_t ypixel, Double_t &x, Double_t &y) = 0;

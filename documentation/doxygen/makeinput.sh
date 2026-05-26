@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # This script creates the file Doxyfile_INPUT which defines the list of directories to be
 # analysed by doxygen. To only build a subset of the documentation it is enough to comment
@@ -73,7 +73,7 @@ echo "        ../../sql/                       \\" >> Doxyfile_INPUT
 echo "        ../../tutorials/                 \\" >> Doxyfile_INPUT
 echo "        ../../bindings/tpython/          \\" >> Doxyfile_INPUT
 echo "        ../../bindings/pyroot/           \\" >> Doxyfile_INPUT
-echo "        ../../bindings/pyroot/pythonizations/python/ROOT/_pythonization/__init__.py          \\" >> Doxyfile_INPUT
+echo "        ../../bindings/pyroot/pythonizations/python/ROOT/_pythonization/          \\" >> Doxyfile_INPUT
 echo "        ../../bindings/r/                \\" >> Doxyfile_INPUT
 
 # echo "        ../../core/clib/                 \\" >> Doxyfile_INPUT
@@ -82,7 +82,6 @@ echo "        ../../bindings/r/                \\" >> Doxyfile_INPUT
 # echo "        ../../core/textinput/            \\" >> Doxyfile_INPUT
 # echo "        ../../graf2d/mathtext/           \\" >> Doxyfile_INPUT
 # echo "        ../../graf3d/ftgl/               \\" >> Doxyfile_INPUT
-# echo "        ../../graf3d/glew/               \\" >> Doxyfile_INPUT
 # echo "        ../../graf3d/x3d/                \\" >> Doxyfile_INPUT
 # echo "        ../../net/rootd/                 \\" >> Doxyfile_INPUT
 # echo "        ../../net/rpdutils/              \\" >> Doxyfile_INPUT

@@ -1,5 +1,4 @@
 /// \file ROOT/RPageStorage.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2018-07-19
 
@@ -327,7 +326,7 @@ public:
 
 protected:
    virtual void InitImpl(RNTupleModel &model) = 0;
-   virtual void CommitDatasetImpl() = 0;
+   virtual RNTupleLink CommitDatasetImpl() = 0;
 
 public:
    /// Parameters for the SealPage() method
@@ -387,10 +386,22 @@ public:
    /// CommitClusterGroup (or the beginning of writing).
    virtual void CommitClusterGroup() = 0;
 
+   /// Creates a new sink with the same underlying storage as this but writing to a different
+   /// RNTuple named `name`. Only one of the two sinks can safely write at the same time.
+   /// The RNTuple written by this cloned sink will be stored in a hidden key (this is a convenient assumption we
+   /// make now since this method is only used to create attribute RNTuples).
+   virtual std::unique_ptr<RPageSink> CloneAsHidden(std::string_view name, const RNTupleWriteOptions &opts) const = 0;
+
+   /// Adds the given anchor information (name + locator) into the main RNTuple's descriptor as an attribute set
+   /// linked to it with the given name.
+   /// The attribute set must have already been written to storage via RNTupleAttrSetWriter::Commit().
+   /// Note that, by RNTuple specs, this is only legal to call on a non-attribute RNTuple's sink.
+   virtual void CommitAttributeSet(std::string_view attrSetName, const RNTupleLink &attrAnchorInfo) = 0;
+
    /// The registered callback is executed at the beginning of CommitDataset();
    void RegisterOnCommitDatasetCallback(Callback_t callback) { fOnDatasetCommitCallbacks.emplace_back(callback); }
    /// Run the registered callbacks and finalize the current cluster and the entrire data set.
-   void CommitDataset();
+   RNTupleLink CommitDataset();
 
    /// Get a new, empty page for the given column that can be filled with up to nElements;
    /// nElements must be larger than zero.
@@ -491,7 +502,7 @@ protected:
    /// Returns the locator of the page list envelope of the given buffer that contains the serialized page list.
    /// Typically, the implementation takes care of compressing and writing the provided buffer.
    virtual RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList, std::uint32_t length) = 0;
-   virtual void CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) = 0;
+   virtual RNTupleLink CommitDatasetImpl(unsigned char *serializedFooter, std::uint32_t length) = 0;
 
    /// Enables the default set of metrics provided by RPageSink. `prefix` will be used as the prefix for
    /// the counters registered in the internal RNTupleMetrics object.
@@ -539,7 +550,9 @@ public:
    RStagedCluster StageCluster(ROOT::NTupleSize_t nNewEntries) final;
    void CommitStagedClusters(std::span<RStagedCluster> clusters) final;
    void CommitClusterGroup() final;
-   void CommitDatasetImpl() final;
+   void CommitAttributeSet(std::string_view attrSetName, const RNTupleLink &attrAnchorInfo) final;
+   /// \return The locator and length of the written anchor.
+   RNTupleLink CommitDatasetImpl() final;
 }; // class RPagePersistentSink
 
 // clang-format off
@@ -840,6 +853,11 @@ public:
    /// Forces the loading of ROOT StreamerInfo from the underlying file. This currently only has an effect for
    /// TFile-backed sources.
    virtual void LoadStreamerInfo() = 0;
+
+   /// Creates a new PageSource using the same underlying file as this but referring to a different RNTuple,
+   /// described by `anchorLink`.
+   virtual std::unique_ptr<RPageSource> OpenWithDifferentAnchor(const ROOT::Internal::RNTupleLink &anchorLink,
+                                                                const ROOT::RNTupleReadOptions &options = {}) = 0;
 }; // class RPageSource
 
 } // namespace Internal

@@ -1,5 +1,4 @@
 /// \file ROOT/RNTupleFillContext.hxx
-/// \ingroup NTuple
 /// \author Jakob Blomer <jblomer@cern.ch>
 /// \date 2024-02-22
 
@@ -31,6 +30,10 @@
 
 namespace ROOT {
 
+namespace Experimental {
+class RNTupleAttrSetWriter;
+}
+
 // clang-format off
 /**
 \class ROOT::RNTupleFillContext
@@ -49,6 +52,7 @@ sequential writing, please refer to RNTupleWriter.
 class RNTupleFillContext {
    friend class ROOT::RNTupleWriter;
    friend class RNTupleParallelWriter;
+   friend class ROOT::Experimental::RNTupleAttrSetWriter;
 
 private:
    /// The page sink's parallel page compression scheduler if IMT is on.

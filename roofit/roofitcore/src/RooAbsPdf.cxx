@@ -286,34 +286,6 @@ RooAbsPdf::~RooAbsPdf()
 }
 
 
-double RooAbsPdf::normalizeWithNaNPacking(double rawVal, double normVal) const {
-
-    if (normVal < 0. || (normVal == 0. && rawVal != 0)) {
-      //Unreasonable normalisations. A zero integral can be tolerated if the function vanishes, though.
-      const std::string msg = "p.d.f normalization integral is zero or negative: " + std::to_string(normVal);
-      logEvalError(msg.c_str());
-      clearValueAndShapeDirty();
-      return RooNaNPacker::packFloatIntoNaN(-normVal + (rawVal < 0. ? -rawVal : 0.));
-    }
-
-    if (rawVal < 0.) {
-       std::stringstream ss;
-       ss << "p.d.f value is less than zero (" << rawVal << "), trying to recover";
-       logEvalError(ss.str().c_str());
-       clearValueAndShapeDirty();
-       return RooNaNPacker::packFloatIntoNaN(-rawVal);
-    }
-
-    if (TMath::IsNaN(rawVal)) {
-      logEvalError("p.d.f value is Not-a-Number");
-      clearValueAndShapeDirty();
-      return rawVal;
-    }
-
-    return (rawVal == 0. && normVal == 0.) ? 0. : rawVal / normVal;
-}
-
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Return current value, normalized by integrating over
 /// the observables in `nset`. If `nset` is 0, the unnormalized value
@@ -354,7 +326,7 @@ double RooAbsPdf::getValV(const RooArgSet* nset) const
     // Evaluate denominator
     const double normVal = _norm->getVal();
 
-    _value = normalizeWithNaNPacking(rawVal, normVal);
+    _value = RooFit::Detail::normalizeWithNaNPacking(*this, rawVal, normVal);
 
     clearValueAndShapeDirty();
   }
@@ -895,7 +867,6 @@ double RooAbsPdf::extendedTerm(RooAbsData const& data, bool weightSquared, bool 
  *   <tr><td> **codegen_no_grad** <td> **Experimental** - Same as **codegen**, but doesn't generate and compile the gradient code and use the regular numerical differentiation instead.
  *                                     This is expected to be slower, but useful for debugging problems with the analytic gradient.
  *   </table>
- * <tr><td> `Optimize(bool flag)`           <td> Activate constant term optimization (on by default)
  * <tr><td> `SplitRange(bool flag)`         <td> Use separate fit ranges in a simultaneous fit. Actual range name for each subsample is assumed to
  *                                               be `rangeName_indexState`, where `indexState` is the state of the master index category of the simultaneous fit.
  * Using `Range("range"), SplitRange()` as switches, different ranges could be set like this:
@@ -1006,7 +977,6 @@ std::unique_ptr<RooAbsReal> RooAbsPdf::createNLLImpl(RooAbsData &data, const Roo
  *   </table>
  *
  * <tr><td> `InitialHesse(bool flag)`       <td>  Flag controls if HESSE before MIGRAD as well, off by default
- * <tr><td> `Optimize(bool flag)`           <td>  Activate constant term optimization of test statistic during minimization (on by default)
  * <tr><td> `Hesse(bool flag)`              <td>  Flag controls if HESSE is run after MIGRAD, on by default
  * <tr><td> `Minos(bool flag)`              <td>  Flag controls if MINOS is run after HESSE, off by default
  * <tr><td> `Minos(const RooArgSet& set)`     <td>  Only run MINOS on given subset of arguments
@@ -1727,26 +1697,27 @@ RooFit::OwningPtr<RooDataHist> RooAbsPdf::generateBinned(const RooArgSet &whatVa
   Int_t histOutSum(0) ;
   for (int i=0 ; i<hist->numEntries() ; i++) {
     hist->get(i) ;
+    const double wi = hist->weight(i) ;
     if (expectedData) {
 
       // Expected data, multiply p.d.f by nEvents
-      double w=hist->weight()*nEvents ;
+      double w=wi*nEvents ;
       hist->set(i, w, sqrt(w));
 
     } else if (extended) {
 
       // Extended mode, set contents to Poisson(pdf*nEvents)
-      double w = RooRandom::randomGenerator()->Poisson(hist->weight()*nEvents) ;
-      hist->set(w,sqrt(w)) ;
+      double w = RooRandom::randomGenerator()->Poisson(wi*nEvents) ;
+      hist->set(i, w, sqrt(w)) ;
 
     } else {
 
       // Regular mode, fill array of weights with Poisson(pdf*nEvents), but to not fill
       // histogram yet.
-      if (hist->weight()>histMax) {
-        histMax = hist->weight() ;
+      if (wi>histMax) {
+        histMax = wi ;
       }
-      histOut[i] = RooRandom::randomGenerator()->Poisson(hist->weight()*nEvents) ;
+      histOut[i] = RooRandom::randomGenerator()->Poisson(wi*nEvents) ;
       histOutSum += histOut[i] ;
     }
   }
@@ -1769,7 +1740,7 @@ RooFit::OwningPtr<RooDataHist> RooAbsPdf::generateBinned(const RooArgSet &whatVa
       hist->get(ibinRand) ;
       double ranY = RooRandom::randomGenerator()->Uniform(histMax) ;
 
-      if (ranY<hist->weight()) {
+      if (ranY<hist->weight(ibinRand)) {
         if (wgt==1) {
           histOut[ibinRand]++ ;
         } else {
@@ -1792,8 +1763,7 @@ RooFit::OwningPtr<RooDataHist> RooAbsPdf::generateBinned(const RooArgSet &whatVa
 
     // Transfer working array to histogram
     for (int i=0 ; i<hist->numEntries() ; i++) {
-      hist->get(i) ;
-      hist->set(histOut[i],sqrt(1.0*histOut[i])) ;
+      hist->set(i, histOut[i], sqrt(1.0*histOut[i])) ;
     }
 
   } else if (expectedData) {
@@ -1803,8 +1773,8 @@ RooFit::OwningPtr<RooDataHist> RooAbsPdf::generateBinned(const RooArgSet &whatVa
     // bin average and bin integral in sampling bins
     double corr = nEvents/hist->sumEntries() ;
     for (int i=0 ; i<hist->numEntries() ; i++) {
-      hist->get(i) ;
-      hist->set(hist->weight()*corr,sqrt(hist->weight()*corr)) ;
+      const double wnew = hist->weight(i)*corr ;
+      hist->set(i, wnew, sqrt(wnew)) ;
     }
 
   }
@@ -2814,12 +2784,9 @@ RooAbsPdf::compileForNormSet(RooArgSet const &normSet, RooFit::Detail::CompileCo
 
    auto newArg = std::make_unique<RooFit::Detail::RooNormalizedPdf>(*pdfClone, normSet);
 
-   // The direct servers are this pdf and the normalization integral, which
-   // don't need to be compiled further.
-   for (RooAbsArg *server : newArg->servers()) {
-      ctx.markAsCompiled(*server);
-   }
-   ctx.markAsCompiled(*newArg);
+   // The direct servers are the cloned pdf (already compiled above) and the
+   // freshly-built normalization integral. Neither needs further compilation.
+   ctx.markSubtreeAsCompiled(*newArg);
    newArg->addOwnedComponents(std::move(pdfClone));
    return newArg;
 }

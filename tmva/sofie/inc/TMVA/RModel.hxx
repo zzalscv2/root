@@ -14,6 +14,7 @@ class RModel final : public RModel_Base {
 private:
    bool fIsInitialized = false;
    bool fIsSubGraph = false;
+   bool fUseVDT = false;
    int fVerbose = 0;
    int fBatchSize = -1;
    long fReadPos = 0;  // reading file position
@@ -35,8 +36,6 @@ private:
    std::vector<std::string> fOutputTensorNames;
    std::vector<std::string> fInputTensorNames; // input tensor names using ONNX order
 
-
-
    std::vector<std::unique_ptr<ROperator>> fOperators;
 
    std::vector<std::shared_ptr<RModel>> fSubGraphs;    ///<!  sub-graph models (transient)
@@ -45,6 +44,8 @@ private:
    // memory pool information for intermediate tensors
    MemoryPoolInfo fIntermediateMemoryInfo;    ///<!  intermediate memory info (transient)
    std::unordered_map<std::string_view, size_t> fIntermediateTensorFrequencyLookup;    ///<!  lookup table for intermediate tensor frequency (transient)
+
+   std::string fExtraCodeForDimShapes; // extra code needed for initialization of dynamic parameters (e.g. number of non zero elements in NonZero operator)
 
 public:
    /**
@@ -73,13 +74,10 @@ public:
    void AddInputTensorInfo(std::string input_name, ETensorType type, std::vector<Dim> shape);
    void AddInputTensorInfo(std::string input_name, ETensorType type, std::vector<size_t> shape);
    void AddOperator(std::unique_ptr<ROperator> op, int order_execution = -1);
-   void AddOperatorReference(ROperator *op, int order_execution = -1)
-   {
-      std::unique_ptr<ROperator> tmp(op);
-      AddOperator(std::move(tmp), order_execution);
-   }
    void AddInitializedTensor(std::string tensor_name, ETensorType type, std::vector<std::size_t> shape,
                              std::shared_ptr<void> data);
+   void AddInitializedTensor(const std::string &tensor_name, ETensorType tensor_type,
+                             const std::vector<std::size_t> &shape, void *raw_data);
    void AddConstantTensor(std::string tensor_name, ETensorType type, std::vector<std::size_t> shape,
                              std::shared_ptr<void> data);
 
@@ -103,17 +101,9 @@ public:
       AddConstantTensor(name, GetTemplatedType<T>(T()), shape, data_ptr);
    }
 
-   template <typename T>
-   void AddInitializedTensor(const std::string & tensor_name, const std::vector<std::size_t> & shape, T *raw_data)
-   {
-      size_t size = ConvertShapeToLength(shape);
-      std::shared_ptr<void> data(malloc(size * sizeof(T)), free);
-      std::memcpy(data.get(), raw_data, size * sizeof(T));
-      AddInitializedTensor(tensor_name,  GetTemplatedType(T()), shape, data);
-   }
-
    void AddShapeTensor(const std::string & name, const std::vector<Dim> & shapeValues, bool scalar = false);
 
+   void AddExtraCodeForDimShapes(const std::string & code) { fExtraCodeForDimShapes += code; }
 
    // add and initialize subgraph to the model
    void InitializeSubGraph(std::shared_ptr<RModel>  graph);
@@ -170,7 +160,7 @@ public:
    std::string AllocateIntermediateMemory(std::span<const std::string_view> op_output_tensors);
    void CheckAndFlushIntermediateMemory(std::span<const std::string_view> op_output_tensors, const size_t& op_idx);
 
-   void SetOptimizationLevel(const OptimizationLevel &optim_level) { fOptimizationLevel = optim_level; }
+   void SetOptimizationLevel(OptimizationLevel optim_level) { fOptimizationLevel = optim_level; }
 
    // get the size in bytes of the constant tensors
    size_t GetConstantTensorSize() const { return fConstantTensorSize; }
@@ -201,6 +191,9 @@ protected:
    void GenerateIntermediateMemoryPool();
    // Generate all session code
    void GenerateSessionCode();
+   bool IsInputTensorShapeParam(std::string const &name) const;
+   std::vector<std::string> CollectTensorMemberNames(const std::string &input);
+   void GenerateRequiredInputTensorInfo();
 
 public:
    const std::vector<std::string> & GetInputTensorNames() const { return fInputTensorNames; }
@@ -210,10 +203,10 @@ public:
    void ReadInitializedTensorsFromFile(long);
    long WriteInitializedTensorsToFile(std::string filename = "");
 
+   void PrintSummary() const;
    void PrintIntermediateTensors() const;
    void PrintOutputTensors() const;
    void OutputGenerated(std::string filename = "", bool append = false);
-   std::vector<std::string> GetOutputTensorNames() { return fOutputTensorNames; }
    void SetFilename(std::string filename) { fName = filename; }
 
    /*
@@ -235,9 +228,14 @@ public:
    void HeadInitializedTensors(std::string name, int n_print = 50);
 
    bool UseSession() const { return fUseSession; }
+   // flag to use vdt for fast math functions (e.g. exp in softmax)
+   void SetUseVDT(bool on) {
+      fUseVDT = on;
+   }
+   bool UseVDT() const { return fUseVDT;}
 
    // Use the ClassDef macro to allow definition of custom streaming
-   ClassDefNV(RModel, 3);
+   ClassDefNV(RModel, 4);
 };
 
 // need to implement here templated member functions and its specialization

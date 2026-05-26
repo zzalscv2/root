@@ -100,6 +100,7 @@ class GraphCreatorHelper;
 void ChangeEmptyEntryRange(const ROOT::RDF::RNode &node, std::pair<ULong64_t, ULong64_t> &&newRange);
 void ChangeBeginAndEndEntries(const RNode &node, Long64_t begin, Long64_t end);
 void ChangeSpec(const ROOT::RDF::RNode &node, ROOT::RDF::Experimental::RDatasetSpec &&spec);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GetDatasetGlobalClusterBoundaries(const RNode &node);
 void TriggerRun(ROOT::RDF::RNode node);
 std::string GetDataSourceLabel(const ROOT::RDF::RNode &node);
 void SetTTreeLifeline(ROOT::RDF::RNode &node, std::any lifeline);
@@ -134,6 +135,8 @@ class RInterface : public RInterfaceBase {
    friend void RDFInternal::ChangeEmptyEntryRange(const RNode &node, std::pair<ULong64_t, ULong64_t> &&newRange);
    friend void RDFInternal::ChangeBeginAndEndEntries(const RNode &node, Long64_t start, Long64_t end);
    friend void RDFInternal::ChangeSpec(const RNode &node, ROOT::RDF::Experimental::RDatasetSpec &&spec);
+   friend std::vector<std::pair<std::uint64_t, std::uint64_t>>
+   RDFInternal::GetDatasetGlobalClusterBoundaries(const RNode &node);
    friend std::string ROOT::Internal::RDF::GetDataSourceLabel(const RNode &node);
    friend void ROOT::Internal::RDF::SetTTreeLifeline(ROOT::RDF::RNode &node, std::any lifeline);
    std::shared_ptr<Proxied> fProxiedPtr; ///< Smart pointer to the graph node encapsulated by this RInterface.
@@ -162,6 +165,9 @@ public:
    RInterface(const std::shared_ptr<RLoopManager> &proxied) : RInterfaceBase(proxied), fProxiedPtr(proxied)
    {
    }
+
+   /// \name Transformation
+   /// \{
 
    ////////////////////////////////////////////////////////////////////////////
    /// \brief Cast any RDataFrame node to a common type ROOT::RDF::RNode.
@@ -1069,6 +1075,18 @@ public:
    /// hx["pt:up"].Draw("SAME");
    /// ~~~
    ///
+   /// ## Short-hand expression syntax
+   ///
+   /// For convenience, when a C++ expression is passed to Vary, the return type can be omitted if the string begins
+   /// with '{' and ends with '}' (whitespace, tab and newline characters are excluded from the search). This means that
+   /// the following is equivalent to the example above:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", "{pt*0.9, pt*1.1}", {"down", "up"})
+   /// // Same as above
+   /// ~~~
+   ///
    /// \note See also This Vary() overload for more information.
    RInterface<Proxied> Vary(std::string_view colName, std::string_view expression,
                             const std::vector<std::string> &variationTags, std::string_view variationName = "")
@@ -1100,6 +1118,18 @@ public:
    /// hx["nominal"].Draw();
    /// hx["pt:0"].Draw("SAME");
    /// hx["pt:1"].Draw("SAME");
+   /// ~~~
+   ///
+   /// ## Short-hand expression syntax
+   ///
+   /// For convenience, when a C++ expression is passed to Vary, the return type can be omitted if the string begins
+   /// with '{' and ends with '}' (whitespace, tab and newline characters are excluded from the search). This means that
+   /// the following is equivalent to the example above:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", "{pt*0.9, pt*1.1}", 2)
+   /// // Same as above
    /// ~~~
    ///
    /// \note See also This Vary() overload for more information.
@@ -1137,6 +1167,31 @@ public:
    /// hx["nominal"].Draw();
    /// hx["xy:0"].Draw("SAME");
    /// hx["xy:1"].Draw("SAME");
+   /// ~~~
+   ///
+   /// ## Short-hand expression syntax
+   ///
+   /// For convenience, when a C++ expression is passed to Vary, the return type can be omitted if the string begins
+   /// with '{' and ends with '}' (whitespace, tab and newline characters are excluded from the search). This means that
+   /// the following is equivalent to the example above:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", "{{x*0.9, x*1.1}, {y*0.9, y*1.1}}", 2, "xy")
+   /// // Same as above
+   /// ~~~
+   ///
+   /// or also:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", R"(
+   ///    {
+   ///     {x*0.9, x*1.1}, // x variations
+   ///     {y*0.9, y*1.1}  // y variations
+   ///    }
+   ///      )", 2, "xy")
+   /// // Same as above
    /// ~~~
    ///
    /// \note See also This Vary() overload for more information.
@@ -1189,6 +1244,31 @@ public:
    /// hx["nominal"].Draw();
    /// hx["xy:down"].Draw("SAME");
    /// hx["xy:up"].Draw("SAME");
+   /// ~~~
+   ///
+   /// ## Short-hand expression syntax
+   ///
+   /// For convenience, when a C++ expression is passed to Vary, the return type can be omitted if the string begins
+   /// with '{' and ends with '}' (whitespace, tab and newline characters are excluded from the search). This means that
+   /// the following is equivalent to the example above:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", "{{x*0.9, x*1.1}, {y*0.9, y*1.1}}", {"down", "up"}, "xy")
+   /// // Same as above
+   /// ~~~
+   ///
+   /// or also:
+   ///
+   /// ~~~{.cpp}
+   /// auto nominal_hx =
+   ///     df.Vary("pt", R"(
+   ///    {
+   ///     {x*0.9, x*1.1}, // x variations
+   ///     {y*0.9, y*1.1} // y variations
+   ///    }
+   ///      )", {"down", "up"}, "xy")
+   /// // Same as above
    /// ~~~
    ///
    /// \note See also This Vary() overload for more information.
@@ -1477,10 +1557,20 @@ public:
       // RemoveDuplicates should preserve ordering of the columns: it might be meaningful.
       RDFInternal::RemoveDuplicates(columnNames);
 
-      auto selectedColumns = RDFInternal::ConvertRegexToColumns(columnNames, columnNameRegexp, "Snapshot");
+      std::vector<std::string> selectedColumns;
+      try {
+         selectedColumns = RDFInternal::ConvertRegexToColumns(columnNames, columnNameRegexp, "Snapshot");
+      }
+      catch (const std::runtime_error &e){
+         // No columns were found, try again but consider all input data source columns
+         if (auto ds = GetDataSource())
+            selectedColumns = RDFInternal::ConvertRegexToColumns(ds->GetColumnNames(), columnNameRegexp, "Snapshot");
+         else
+            throw e;
+      }
 
       if (RDFInternal::GetDataSourceLabel(*this) == "RNTupleDS") {
-         RDFInternal::RemoveRNTupleSubFields(selectedColumns);
+         RDFInternal::RemoveRNTupleSubfields(selectedColumns);
       }
 
       return Snapshot(treename, filename, selectedColumns, options);
@@ -2216,7 +2306,7 @@ public:
    /// \param[in] model The returned histogram will be constructed using this as a model.
    /// \param[in] columnList
    /// A list containing the names of the columns that will be passed when calling `Fill`.
-   ///  (N columns for unweighted filling, or N+1 columns for weighted filling)
+   /// \param[in] wName The name of the column that will provide the weights.
    /// \return the N-dimensional histogram wrapped in a RResultPtr.
    ///
    /// This action is *lazy*: upon invocation of this method the calculation is
@@ -2229,19 +2319,42 @@ public:
    ///                                               {"col0", "col1", "col2", "col3"});
    /// ~~~
    ///
+   /// \note A column with event weights should not be passed as part of `columnList`, but instead be passed in the new
+   /// argument `wName`: `HistoND(model, cols, weightCol)`.
+   ///
    template <typename FirstColumn, typename... OtherColumns> // need FirstColumn to disambiguate overloads
-   RResultPtr<::THnD> HistoND(const THnDModel &model, const ColumnNames_t &columnList)
+   RResultPtr<::THnD> HistoND(const THnDModel &model, const ColumnNames_t &columnList, std::string_view wName = "")
    {
       std::shared_ptr<::THnD> h(nullptr);
       {
          ROOT::Internal::RDF::RIgnoreErrorLevelRAII iel(kError);
          h = model.GetHistogram();
+         const auto hDims = h->GetNdimensions();
+         decltype(hDims) nCols = columnList.size();
 
-         if (int(columnList.size()) == (h->GetNdimensions() + 1)) {
+         if (!wName.empty() && nCols == hDims + 1)
+            throw std::invalid_argument("The weight column was passed as an argument and at the same time the list of "
+                                        "input columns contains one column more than the number of dimensions of the "
+                                        "histogram. Call as 'HistoND(model, cols, weightCol)'.");
+
+         if (nCols == hDims + 1)
+            Warning("HistoND", "Passing the column with the weights as the last column in the list is deprecated. "
+                               "Instead, pass it as a separate argument, e.g. 'HistoND(model, cols, weightCol)'.");
+
+         if (!wName.empty() || nCols == hDims + 1)
             h->Sumw2();
-         } else if (int(columnList.size()) != h->GetNdimensions()) {
-            throw std::runtime_error("Wrong number of columns for the specified number of histogram axes.");
-         }
+
+         if (nCols != hDims + 1 && nCols != hDims)
+            throw std::invalid_argument("Wrong number of columns for the specified number of histogram axes.");
+      }
+
+      if (!wName.empty()) {
+         // The action helper will invoke THnBase::Fill overload that performs weighted filling in case the number of
+         // passed arguments is one more the number of dimensions of the histogram.
+         ColumnNames_t userColumns = columnList;
+         userColumns.push_back(std::string{wName});
+         return CreateAction<RDFInternal::ActionTags::HistoND, FirstColumn, OtherColumns...>(userColumns, h, h,
+                                                                                             fProxiedPtr);
       }
       return CreateAction<RDFInternal::ActionTags::HistoND, FirstColumn, OtherColumns...>(columnList, h, h,
                                                                                           fProxiedPtr);
@@ -2251,7 +2364,7 @@ public:
    /// \brief Fill and return an N-dimensional histogram (*lazy action*).
    /// \param[in] model The returned histogram will be constructed using this as a model.
    /// \param[in] columnList A list containing the names of the columns that will be passed when calling `Fill`
-   ///  (N columns for unweighted filling, or N+1 columns for weighted filling)
+   /// \param[in] wName The name of the column that will provide the weights.
    /// \return the N-dimensional histogram wrapped in a RResultPtr.
    ///
    /// This action is *lazy*: upon invocation of this method the calculation is
@@ -2264,18 +2377,41 @@ public:
    ///                                               {"col0", "col1", "col2", "col3"});
    /// ~~~
    ///
-   RResultPtr<::THnD> HistoND(const THnDModel &model, const ColumnNames_t &columnList)
+   /// \note A column with event weights should not be passed as part of `columnList`, but instead be passed in the new
+   /// argument `wName`: `HistoND(model, cols, weightCol)`.
+   ///
+   RResultPtr<::THnD> HistoND(const THnDModel &model, const ColumnNames_t &columnList, std::string_view wName = "")
    {
       std::shared_ptr<::THnD> h(nullptr);
       {
          ROOT::Internal::RDF::RIgnoreErrorLevelRAII iel(kError);
          h = model.GetHistogram();
+         const auto hDims = h->GetNdimensions();
+         decltype(hDims) nCols = columnList.size();
 
-         if (int(columnList.size()) == (h->GetNdimensions() + 1)) {
+         if (!wName.empty() && nCols == hDims + 1)
+            throw std::invalid_argument("The weight column was passed as an argument and at the same time the list of "
+                                        "input columns contains one column more than the number of dimensions of the "
+                                        "histogram. Call as 'HistoND(model, cols, weightCol)'.");
+
+         if (nCols == hDims + 1)
+            Warning("HistoND", "Passing the column with the weights as the last column in the list is deprecated. "
+                               "Instead, pass it as a separate argument, e.g. 'HistoND(model, cols, weightCol)'.");
+
+         if (!wName.empty() || nCols == hDims + 1)
             h->Sumw2();
-         } else if (int(columnList.size()) != h->GetNdimensions()) {
-            throw std::runtime_error("Wrong number of columns for the specified number of histogram axes.");
-         }
+
+         if (nCols != hDims + 1 && nCols != hDims)
+            throw std::invalid_argument("Wrong number of columns for the specified number of histogram axes.");
+      }
+
+      if (!wName.empty()) {
+         // The action helper will invoke THnBase::Fill overload that performs weighted filling in case the number of
+         // passed arguments is one more the number of dimensions of the histogram.
+         ColumnNames_t userColumns = columnList;
+         userColumns.push_back(std::string{wName});
+         return CreateAction<RDFInternal::ActionTags::HistoND, RDFDetail::RInferredType>(userColumns, h, h, fProxiedPtr,
+                                                                                         userColumns.size());
       }
       return CreateAction<RDFInternal::ActionTags::HistoND, RDFDetail::RInferredType>(columnList, h, h, fProxiedPtr,
                                                                                       columnList.size());
@@ -2290,7 +2426,7 @@ public:
    /// \param[in] model The returned histogram will be constructed using this as a model.
    /// \param[in] columnList
    /// A list containing the names of the columns that will be passed when calling `Fill`.
-   ///  (N columns for unweighted filling, or N+1 columns for weighted filling)
+   /// \param[in] wName The name of the column that will provide the weights.
    /// \return the N-dimensional histogram wrapped in a RResultPtr.
    ///
    /// This action is *lazy*: upon invocation of this method the calculation is
@@ -2303,19 +2439,44 @@ public:
    ///                                               {"col0", "col1", "col2", "col3"});
    /// ~~~
    ///
+   /// \note A column with event weights should not be passed as part of `columnList`, but instead be passed in the new
+   /// argument `wName`: `HistoND(model, cols, weightCol)`.
+   ///
    template <typename FirstColumn, typename... OtherColumns> // need FirstColumn to disambiguate overloads
-   RResultPtr<::THnSparseD> HistoNSparseD(const THnSparseDModel &model, const ColumnNames_t &columnList)
+   RResultPtr<::THnSparseD>
+   HistoNSparseD(const THnSparseDModel &model, const ColumnNames_t &columnList, std::string_view wName = "")
    {
       std::shared_ptr<::THnSparseD> h(nullptr);
       {
          ROOT::Internal::RDF::RIgnoreErrorLevelRAII iel(kError);
          h = model.GetHistogram();
+         const auto hDims = h->GetNdimensions();
+         decltype(hDims) nCols = columnList.size();
 
-         if (int(columnList.size()) == (h->GetNdimensions() + 1)) {
+         if (!wName.empty() && nCols == hDims + 1)
+            throw std::invalid_argument("The weight column was passed as an argument and at the same time the list of "
+                                        "input columns contains one column more than the number of dimensions of the "
+                                        "histogram. Call as 'HistoNSparseD(model, cols, weightCol)'.");
+
+         if (nCols == hDims + 1)
+            Warning("HistoNSparseD",
+                    "Passing the column with the weights as the last column in the list is deprecated. "
+                    "Instead, pass it as a separate argument, e.g. 'HistoNSparseD(model, cols, weightCol)'.");
+
+         if (!wName.empty() || nCols == hDims + 1)
             h->Sumw2();
-         } else if (int(columnList.size()) != h->GetNdimensions()) {
-            throw std::runtime_error("Wrong number of columns for the specified number of histogram axes.");
-         }
+
+         if (nCols != hDims + 1 && nCols != hDims)
+            throw std::invalid_argument("Wrong number of columns for the specified number of histogram axes.");
+      }
+
+      if (!wName.empty()) {
+         // The action helper will invoke THnBase::Fill overload that performs weighted filling in case the number of
+         // passed arguments is one more the number of dimensions of the histogram.
+         ColumnNames_t userColumns = columnList;
+         userColumns.push_back(std::string{wName});
+         return CreateAction<RDFInternal::ActionTags::HistoNSparseD, FirstColumn, OtherColumns...>(userColumns, h, h,
+                                                                                                   fProxiedPtr);
       }
       return CreateAction<RDFInternal::ActionTags::HistoNSparseD, FirstColumn, OtherColumns...>(columnList, h, h,
                                                                                                 fProxiedPtr);
@@ -2325,7 +2486,7 @@ public:
    /// \brief Fill and return a sparse N-dimensional histogram (*lazy action*).
    /// \param[in] model The returned histogram will be constructed using this as a model.
    /// \param[in] columnList A list containing the names of the columns that will be passed when calling `Fill`
-   ///  (N columns for unweighted filling, or N+1 columns for weighted filling)
+   /// \param[in] wName The name of the column that will provide the weights.
    /// \return the N-dimensional histogram wrapped in a RResultPtr.
    ///
    /// This action is *lazy*: upon invocation of this method the calculation is
@@ -2338,24 +2499,75 @@ public:
    ///                                               {"col0", "col1", "col2", "col3"});
    /// ~~~
    ///
-   RResultPtr<::THnSparseD> HistoNSparseD(const THnSparseDModel &model, const ColumnNames_t &columnList)
+   /// \note A column with event weights should not be passed as part of `columnList`, but instead be passed in the new
+   /// argument `wName`: `HistoND(model, cols, weightCol)`.
+   ///
+   RResultPtr<::THnSparseD>
+   HistoNSparseD(const THnSparseDModel &model, const ColumnNames_t &columnList, std::string_view wName = "")
    {
       std::shared_ptr<::THnSparseD> h(nullptr);
       {
          ROOT::Internal::RDF::RIgnoreErrorLevelRAII iel(kError);
          h = model.GetHistogram();
+         const auto hDims = h->GetNdimensions();
+         decltype(hDims) nCols = columnList.size();
 
-         if (int(columnList.size()) == (h->GetNdimensions() + 1)) {
+         if (!wName.empty() && nCols == hDims + 1)
+            throw std::invalid_argument("The weight column was passed as an argument and at the same time the list of "
+                                        "input columns contains one column more than the number of dimensions of the "
+                                        "histogram. Call as 'HistoNSparseD(model, cols, weightCol)'.");
+
+         if (nCols == hDims + 1)
+            Warning("HistoNSparseD",
+                    "Passing the column with the weights as the last column in the list is deprecated. "
+                    "Instead, pass it as a separate argument, e.g. 'HistoNSparseD(model, cols, weightCol)'.");
+
+         if (!wName.empty() || nCols == hDims + 1)
             h->Sumw2();
-         } else if (int(columnList.size()) != h->GetNdimensions()) {
-            throw std::runtime_error("Wrong number of columns for the specified number of histogram axes.");
-         }
+
+         if (nCols != hDims + 1 && nCols != hDims)
+            throw std::invalid_argument("Wrong number of columns for the specified number of histogram axes.");
+      }
+
+      if (!wName.empty()) {
+         // The action helper will invoke THnBase::Fill overload that performs weighted filling in case the number of
+         // passed arguments is one more the number of dimensions of the histogram.
+         ColumnNames_t userColumns = columnList;
+         userColumns.push_back(std::string{wName});
+         return CreateAction<RDFInternal::ActionTags::HistoNSparseD, RDFDetail::RInferredType>(
+            userColumns, h, h, fProxiedPtr, userColumns.size());
       }
       return CreateAction<RDFInternal::ActionTags::HistoNSparseD, RDFDetail::RInferredType>(
          columnList, h, h, fProxiedPtr, columnList.size());
    }
 
 #ifdef R__HAS_ROOT7
+   ////////////////////////////////////////////////////////////////////////////
+   /// \brief Fill and return a one-dimensional RHist (*lazy action*).
+   /// \tparam BinContentType The bin content type of the returned RHist.
+   /// \param[in] nNormalBins The returned histogram will be constructed using this number of normal bins.
+   /// \param[in] interval The axis interval of the constructed histogram (lower end inclusive, upper end exclusive).
+   /// \param[in] vName The name of the column that will fill the histogram.
+   /// \return the histogram wrapped in a RResultPtr.
+   ///
+   /// This action is *lazy*: upon invocation of this method the calculation is
+   /// booked but not executed. Also see RResultPtr.
+   ///
+   /// ### Example usage:
+   /// ~~~{.cpp}
+   /// auto myHist = myDf.Hist(10, {5, 15}, "col0");
+   /// ~~~
+   template <typename BinContentType = double, typename V = RDFDetail::RInferredType>
+   RResultPtr<ROOT::Experimental::RHist<BinContentType>>
+   Hist(std::uint64_t nNormalBins, std::pair<double, double> interval, std::string_view vName)
+   {
+      std::shared_ptr h = std::make_shared<ROOT::Experimental::RHist<BinContentType>>(nNormalBins, interval);
+
+      const ColumnNames_t columnList = {std::string(vName)};
+
+      return Hist<V>(h, columnList);
+   }
+
    ////////////////////////////////////////////////////////////////////////////
    /// \brief Fill and return an RHist (*lazy action*).
    /// \tparam BinContentType The bin content type of the returned RHist.
@@ -2420,6 +2632,34 @@ public:
    }
 
    ////////////////////////////////////////////////////////////////////////////
+   /// \brief Fill and return a one-dimensional RHist with weights (*lazy action*).
+   /// \tparam BinContentType The bin content type of the returned RHist.
+   /// \param[in] nNormalBins The returned histogram will be constructed using this number of normal bins.
+   /// \param[in] interval The axis interval of the constructed histogram (lower end inclusive, upper end exclusive).
+   /// \param[in] vName The name of the column that will fill the histogram.
+   /// \param[in] wName The name of the column that will provide the weights.
+   /// \return the histogram wrapped in a RResultPtr.
+   ///
+   /// This action is *lazy*: upon invocation of this method the calculation is
+   /// booked but not executed. Also see RResultPtr.
+   ///
+   /// ### Example usage:
+   /// ~~~{.cpp}
+   /// auto myHist = myDf.Hist(10, {5, 15}, "col0", "colW");
+   /// ~~~
+   template <typename BinContentType = ROOT::Experimental::RBinWithError, typename V = RDFDetail::RInferredType,
+             typename W = RDFDetail::RInferredType>
+   RResultPtr<ROOT::Experimental::RHist<BinContentType>>
+   Hist(std::uint64_t nNormalBins, std::pair<double, double> interval, std::string_view vName, std::string_view wName)
+   {
+      std::shared_ptr h = std::make_shared<ROOT::Experimental::RHist<BinContentType>>(nNormalBins, interval);
+
+      const ColumnNames_t columnList = {std::string(vName)};
+
+      return Hist<V, W>(h, columnList, wName);
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
    /// \brief Fill and return an RHist with weights (*lazy action*).
    /// \tparam BinContentType The bin content type of the returned RHist.
    /// \param[in] axes The returned histogram will be constructed using these axes.
@@ -2479,6 +2719,83 @@ public:
    template <typename ColumnType = RDFDetail::RInferredType, typename... ColumnTypes, typename BinContentType>
    RResultPtr<ROOT::Experimental::RHist<BinContentType>>
    Hist(std::shared_ptr<ROOT::Experimental::RHist<BinContentType>> h, const ColumnNames_t &columnList,
+        std::string_view wName)
+   {
+      static_assert(ROOT::Experimental::RHistEngine<BinContentType>::SupportsWeightedFilling,
+                    "weighted filling is not supported for integral bin content types");
+
+      RDFInternal::WarnHist();
+
+      if (h->GetNDimensions() != columnList.size()) {
+         std::string msg = "Wrong number of columns for the passed histogram: ";
+         msg += "expected " + std::to_string(h->GetNDimensions()) + ", got " + std::to_string(columnList.size());
+         throw std::invalid_argument(msg);
+      }
+
+      // Add the weight column to the list of argument columns to pass it through the infrastructure.
+      ColumnNames_t columnListWithWeights(columnList);
+      columnListWithWeights.push_back(std::string(wName));
+
+      return CreateAction<RDFInternal::ActionTags::HistWithWeight, ColumnType, ColumnTypes...>(
+         columnListWithWeights, h, h, fProxiedPtr, columnListWithWeights.size());
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   /// \brief Fill the provided RHistEngine (*lazy action*).
+   /// \param[in] h The histogram that should be filled.
+   /// \param[in] columnList A list containing the names of the columns that will be passed when calling `Fill`
+   /// \return the histogram wrapped in a RResultPtr.
+   ///
+   /// This action is *lazy*: upon invocation of this method the calculation is
+   /// booked but not executed. Also see RResultPtr.
+   ///
+   /// During execution of the computation graph, the passed histogram must only be accessed with methods that are
+   /// allowed during concurrent filling.
+   ///
+   /// ### Example usage:
+   /// ~~~{.cpp}
+   /// auto h = std::make_shared<ROOT::Experimental::RHistEngine<double>>(10, {5.0, 15.0});
+   /// auto myHist = myDf.Hist(h, {"col0"});
+   /// ~~~
+   template <typename ColumnType = RDFDetail::RInferredType, typename... ColumnTypes, typename BinContentType>
+   RResultPtr<ROOT::Experimental::RHistEngine<BinContentType>>
+   Hist(std::shared_ptr<ROOT::Experimental::RHistEngine<BinContentType>> h, const ColumnNames_t &columnList)
+   {
+      RDFInternal::WarnHist();
+
+      if (h->GetNDimensions() != columnList.size()) {
+         std::string msg = "Wrong number of columns for the passed histogram: ";
+         msg += "expected " + std::to_string(h->GetNDimensions()) + ", got " + std::to_string(columnList.size());
+         throw std::invalid_argument(msg);
+      }
+
+      return CreateAction<RDFInternal::ActionTags::Hist, ColumnType, ColumnTypes...>(columnList, h, h, fProxiedPtr,
+                                                                                     columnList.size());
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   /// \brief Fill the provided RHistEngine with weights (*lazy action*).
+   /// \param[in] h The histogram that should be filled.
+   /// \param[in] columnList A list containing the names of the columns that will be passed when calling `Fill`
+   /// \param[in] wName The name of the column that will provide the weights.
+   /// \return the histogram wrapped in a RResultPtr.
+   ///
+   /// This action is *lazy*: upon invocation of this method the calculation is
+   /// booked but not executed. Also see RResultPtr.
+   ///
+   /// This overload is not available for integral bin content types (see \ref RHistEngine::SupportsWeightedFilling).
+   ///
+   /// During execution of the computation graph, the passed histogram must only be accessed with methods that are
+   /// allowed during concurrent filling.
+   ///
+   /// ### Example usage:
+   /// ~~~{.cpp}
+   /// auto h = std::make_shared<ROOT::Experimental::RHistEngine<double>>(10, {5.0, 15.0});
+   /// auto myHist = myDf.Hist(h, {"col0"}, "colW");
+   /// ~~~
+   template <typename ColumnType = RDFDetail::RInferredType, typename... ColumnTypes, typename BinContentType>
+   RResultPtr<ROOT::Experimental::RHistEngine<BinContentType>>
+   Hist(std::shared_ptr<ROOT::Experimental::RHistEngine<BinContentType>> h, const ColumnNames_t &columnList,
         std::string_view wName)
    {
       static_assert(ROOT::Experimental::RHistEngine<BinContentType>::SupportsWeightedFilling,
@@ -3417,6 +3734,8 @@ public:
       return Display(selectedColumns, nRows, nMaxCollectionElements);
    }
 
+   /// \}
+
 private:
    template <typename F, typename DefineType, typename RetType = typename TTraits::CallableTraits<F>::ret_type>
    std::enable_if_t<std::is_default_constructible<RetType>::value, RInterface<Proxied>>
@@ -3558,9 +3877,11 @@ private:
             throw std::logic_error("A column name was passed to the same Vary invocation multiple times.");
       }
 
+      // Cannot vary different input column types, assume the first
+      auto varyColType = GetColumnType(colNames[0]);
       auto jittedVariation =
          RDFInternal::BookVariationJit(colNames, variationName, variationTags, expression, *fLoopManager,
-                                       GetDataSource(), fColRegister, isSingleColumn);
+                                       GetDataSource(), fColRegister, isSingleColumn, varyColType);
 
       RDFInternal::RColumnRegister newColRegister(fColRegister);
       newColRegister.AddVariation(std::move(jittedVariation));

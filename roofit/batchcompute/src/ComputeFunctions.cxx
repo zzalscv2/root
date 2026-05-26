@@ -12,7 +12,6 @@
 
 /**
 \file ComputeFunctions.cxx
-\ingroup roofit_dev_docs_batchcompute
 
 This file contains vectorizable computation functions for PDFs and other Roofit objects.
 The same source file can also be compiled with nvcc. All functions have a single `Batches`
@@ -399,7 +398,7 @@ __rooglobal__ void computeGamma(Batches &batches)
    double gamma = -std::lgamma(G[0]);
    for (size_t i = BEGIN; i < batches.nEvents; i += STEP) {
       if (X[i] == M[i]) {
-         batches.output[i] = (G[i] == 1.0) / B[i];
+         batches.output[i] = int(G[i] == 1.0) / B[i];
       } else if (G._isVector) {
          batches.output[i] = -std::lgamma(G[i]);
       } else {

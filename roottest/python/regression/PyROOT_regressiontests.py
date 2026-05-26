@@ -70,19 +70,15 @@ class Regression01TwiceImportStar( MyTestCase ):
 class Regression02PyException(MyTestCase):
    def test1RaiseAndTrapPyException(self):
       """Test thrown TPyException object processing"""
-      # See https://github.com/root-project/root/issues/7541 and
-      # https://bugs.llvm.org/show_bug.cgi?id=49692 :
-      # llvm JIT fails to catch exceptions on M1, so we disable their testing
-      if platform.processor() != "arm" or platform.mac_ver()[0] == '':
-         gROOT.LoadMacro("ScottCppyy.C+")
+      gROOT.LoadMacro("ScottCppyy.C+")
 
-         # test of not overloaded global function
-         with self.assertRaisesRegex(SyntaxError, "test error message"):
-            ROOT.ThrowPyException()
+      # test of not overloaded global function
+      with self.assertRaisesRegex(SyntaxError, "test error message"):
+         ROOT.ThrowPyException()
 
-         # test of overloaded function
-         with self.assertRaisesRegex(SyntaxError, "overloaded int test error message"):
-            ROOT.MyThrowingClass.ThrowPyException(1)
+      # test of overloaded function
+      with self.assertRaisesRegex(SyntaxError, "overloaded int test error message"):
+         ROOT.MyThrowingClass.ThrowPyException(1)
 
 
 ### Several tests that used to cause crashes =================================
@@ -229,9 +225,8 @@ class Regression05LoKiNamespace( MyTestCase ):
       gROOT.LoadMacro( 'LoKiNamespace.C+' )
       LoKi = ROOT.LoKi
 
-      self.assertEqual( LoKi.Constant( rcp ).__name__, 'Constant<%s>' % rcp )
-      self.assertEqual(
-         LoKi.BooleanConstant( rcp ).__name__, 'BooleanConstant<%s>' % rcp )
+      self.assertTrue(LoKi.Constant( rcp ).isConstParticlePtr())
+      self.assertTrue(LoKi.BooleanConstant( rcp ).isConstParticlePtr())
 
    def test2TemplateWithNamespaceReturnValue(self):
       """Test the return value of a templated function in a namespace"""
@@ -524,7 +519,7 @@ class Regression21ReuseProxies(MyTestCase):
       a2 = ROOT.A()
       a1.otherA = a2
       a3 = a1.otherA
-      self.assertEqual(a3, a2)
+      self.assertIs(a3, a2)
       val = 4
       a3.b = val
       self.assertEqual(a2.b, val)
@@ -573,7 +568,7 @@ class Regression24CppPythonInheritance(MyTestCase):
    def test01DeletedCopyConstructor(self):
       """Test that deleted base class copy constructor is not used"""
       # ROOT-10872
-      cppyy.gbl.gInterpreter.Declare('''
+      cppyy.cppdef('''
       struct NoCopy1 {
          NoCopy1() = default;
          NoCopy1(const NoCopy1&) = delete;
@@ -589,7 +584,7 @@ class Regression24CppPythonInheritance(MyTestCase):
    def test02MoveConstructor(self):
       """Test that move constructor is not mistaken for copy constructor"""
       # ROOT-10872
-      cppyy.gbl.gInterpreter.Declare('''
+      cppyy.cppdef('''
       struct NoCopy2 {
          NoCopy2() = default;
          NoCopy2(const NoCopy2&) = delete;
@@ -675,7 +670,7 @@ class Regression24CppPythonInheritance(MyTestCase):
    def test06MultiInheritance(self):
        """Test for a Python derived class in presence of multiple inheritance in C++"""
        # 6376
-       cppyy.gbl.gInterpreter.Declare("""
+       cppyy.cppdef("""
        #include <array>
        #include <iostream>
 
@@ -738,7 +733,7 @@ class Regression24CppPythonInheritance(MyTestCase):
        """Presence of multiple protected overloads of a method and both private and protected"""
        # 6345
 
-       cppyy.gbl.gInterpreter.Declare('''
+       cppyy.cppdef('''
        class MyClass6345 {
        public:
           virtual ~MyClass6345() {}
@@ -765,7 +760,7 @@ class Regression24CppPythonInheritance(MyTestCase):
        """Virtual call resolution in deep hierarchy (C++->Py->Py)"""
        # 6470
 
-       cppyy.gbl.gInterpreter.Declare('''
+       cppyy.cppdef('''
        class CppBase6470 {
        public:
           virtual ~CppBase6470() {}
@@ -804,7 +799,7 @@ class Regression24CppPythonInheritance(MyTestCase):
        class PurePy2:
           def bar(self): return 2
 
-       cppyy.gbl.gInterpreter.Declare('''
+       cppyy.cppdef('''
        class MyCppClass11 {
        public:
           int foo() { return 3; }

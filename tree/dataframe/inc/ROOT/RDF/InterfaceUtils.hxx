@@ -198,6 +198,30 @@ BuildAction(const ColumnNames_t &columnList, const std::shared_ptr<ROOT::Experim
    using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
    return std::make_unique<Action_t>(Helper_t(h, nSlots), columnList, std::move(prevNode), colRegister);
 }
+
+// Action for RHistEngine using FillAtomic without weights
+template <typename... ColTypes, typename BinContentType, typename PrevNodeType>
+std::unique_ptr<RActionBase>
+BuildAction(const ColumnNames_t &columnList, const std::shared_ptr<ROOT::Experimental::RHistEngine<BinContentType>> &h,
+            const unsigned int, std::shared_ptr<PrevNodeType> prevNode, ActionTags::Hist,
+            const RColumnRegister &colRegister)
+{
+   using Helper_t = RHistEngineFillHelper<BinContentType>;
+   using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
+   return std::make_unique<Action_t>(Helper_t(h), columnList, std::move(prevNode), colRegister);
+}
+
+// Action for RHistEngine using FillAtomic with weights
+template <typename... ColTypes, typename BinContentType, typename PrevNodeType>
+std::unique_ptr<RActionBase>
+BuildAction(const ColumnNames_t &columnList, const std::shared_ptr<ROOT::Experimental::RHistEngine<BinContentType>> &h,
+            const unsigned int, std::shared_ptr<PrevNodeType> prevNode, ActionTags::HistWithWeight,
+            const RColumnRegister &colRegister)
+{
+   using Helper_t = RHistEngineFillHelper<BinContentType, true>;
+   using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
+   return std::make_unique<Action_t>(Helper_t(h), columnList, std::move(prevNode), colRegister);
+}
 #endif
 
 template <typename... ColTypes, typename PrevNodeType>
@@ -409,30 +433,12 @@ std::shared_ptr<RJittedDefine> BookDefinePerSampleJit(std::string_view name, std
 std::shared_ptr<RJittedVariation>
 BookVariationJit(const std::vector<std::string> &colNames, std::string_view variationName,
                  const std::vector<std::string> &variationTags, std::string_view expression, RLoopManager &lm,
-                 RDataSource *ds, const RColumnRegister &colRegister, bool isSingleColumn);
+                 RDataSource *ds, const RColumnRegister &colRegister, bool isSingleColumn,
+                 const std::string &varyColType);
 
 std::string JitBuildAction(const ColumnNames_t &bl, const std::type_info &art, const std::type_info &at, TTree *tree,
                            const unsigned int nSlots, const RColumnRegister &colRegister, RDataSource *ds,
                            const bool vector2RVec = true);
-
-// Allocate a weak_ptr on the heap, return a pointer to it. The user is responsible for deleting this weak_ptr.
-// This function is meant to be used by RInterface's methods that book code for jitting.
-// The problem it solves is that we generate code to be lazily jitted with the addresses of certain objects in them,
-// and we need to check those objects are still alive when the generated code is finally jitted and executed.
-// So we pass addresses to weak_ptrs allocated on the heap to the jitted code, which is then responsible for
-// the deletion of the weak_ptr object.
-template <typename T>
-std::weak_ptr<T> *MakeWeakOnHeap(const std::shared_ptr<T> &shPtr)
-{
-   return new std::weak_ptr<T>(shPtr);
-}
-
-// Same as MakeWeakOnHeap, but create a shared_ptr that makes sure the object is definitely kept alive.
-template <typename T>
-std::shared_ptr<T> *MakeSharedOnHeap(const std::shared_ptr<T> &shPtr)
-{
-   return new std::shared_ptr<T>(shPtr);
-}
 
 bool AtLeastOneEmptyString(const std::vector<std::string_view> strings);
 
@@ -786,7 +792,7 @@ AddSizeBranches(ROOT::RDF::RDataSource *ds, std::vector<std::string> &&colsWitho
                 std::vector<std::string> &&colsWithAliases);
 
 void RemoveDuplicates(ColumnNames_t &columnNames);
-void RemoveRNTupleSubFields(ColumnNames_t &columnNames);
+void RemoveRNTupleSubfields(ColumnNames_t &columnNames);
 
 } // namespace RDF
 } // namespace Internal

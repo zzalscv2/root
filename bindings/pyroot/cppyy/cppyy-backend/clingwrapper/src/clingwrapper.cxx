@@ -1247,6 +1247,18 @@ bool Cppyy::IsAggregate(TCppType_t type)
     return false;
 }
 
+bool Cppyy::IsIntegerType(const std::string &type_name)
+{
+   // Test if the named type is an integer type
+   TypeInfo_t *ti = gInterpreter->TypeInfo_Factory(type_name.c_str());
+   if (!ti)
+      return false;
+   void *qtp = gInterpreter->TypeInfo_QualTypePtr(ti);
+   bool result = qtp ? gInterpreter->IsIntegerType(qtp) : false;
+   gInterpreter->TypeInfo_Delete(ti);
+   return result;
+}
+
 bool Cppyy::IsDefaultConstructable(TCppType_t type)
 {
 // Test if this type has a default constructor or is a "plain old data" type
@@ -1275,7 +1287,7 @@ std::string outer_with_template(const std::string& name)
         else if (tpl_open == 0 && \
                  c == ':' && pos+1 < name.size() && name[pos+1] == ':') {
         // found the extend of the scope ... done
-            return name.substr(0, pos-1);
+            return name.substr(0, pos);
         }
     }
 
@@ -1703,7 +1715,7 @@ ptrdiff_t Cppyy::GetBaseOffset(TCppType_t derived, TCppType_t base,
             std::ostringstream msg;
             msg << "failed offset calculation between " << cb->GetName() << " and " << cd->GetName();
             // TODO: propagate this warning to caller w/o use of Python C-API
-            // PyErr_Warn(PyExc_RuntimeWarning, const_cast<char*>(msg.str().c_str()));
+            // PyErr_WarnEx(PyExc_RuntimeWarning, const_cast<char*>(msg.str().c_str()), 1);
             std::cerr << "Warning: " << msg.str() << '\n';
         }
 
